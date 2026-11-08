@@ -1640,9 +1640,48 @@ def cmd_validate(a):
     sys.exit(rc)
 
 
+# ---- 参数防呆（RunSkillScript 不是 shell，模型偶尔把整条命令连同大量换行塞进 args 的一项） ----
+def _packed(x):
+    return x != x.strip() or any(ord(ch) < 32 for ch in x) or re.search(r"\s-{1,2}[A-Za-z]", x) is not None
+
+
+def repair_argv(argv, script, usage):
+    """把塞进一项的整条命令拆回逐项（按空白拆；本流程的路径都是 tool-results/… 无空格），打印 WARN 后照常执行。"""
+    if not any(_packed(x) for x in argv):
+        return argv
+    import shlex
+    out = []
+    for x in argv:
+        if _packed(x):
+            try:
+                out.extend(shlex.split(x))
+            except ValueError:
+                out.extend(x.split())
+        else:
+            out.append(x)
+    print("WARN ARGS_REPACKED args 把整条命令或换行塞进了一项，脚本已拆成 %d 项照常执行：%s。"
+          "下次调用请 args 一词一项。用法：%s" % (len(out), " ".join(out)[:300], usage))
+    return out
+
+
+class ArgParser(argparse.ArgumentParser):
+    """参数错误时给出能照着改的提示（exit 2），不让模型只看到 argparse 原话。"""
+    usage_hint = ""
+
+    def error(self, message):
+        print("ERROR INVALID_SCRIPT_ARGS " + " ".join(message.split())[:300])
+        print("HINT 用法：" + self.usage_hint)
+        print("HINT args 一词一项、不带换行；按提示改一次后重跑。同一参数错误第二次出现就不要再试，"
+              "把原话记入 toolIssues，按“技能配置异常”处理")
+        sys.exit(2)
+
+USAGE = 'build/plan --rid <requestId> --rules <规则文件>... --props <属性文件>；validate --rid <requestId> --rules <文件>...；names/rules --rules <文件>...；props --props <文件>；result --file <文件>；summary --rid <requestId>；例 args=["build","--rid","<requestId>","--rules","规则文件1","机构规则文件","--props","属性文件"]'
+
+
 def main():
-    ap = argparse.ArgumentParser()
-    sp = ap.add_subparsers(dest="cmd", required=True)
+    ArgParser.usage_hint = USAGE
+    ap = ArgParser()
+    sp = ap.add_subparsers(dest="cmd", required=True, parser_class=ArgParser)
     n = sp.add_parser("names")
     n.add_argument("--rules", required=True, nargs="+")
     b = sp.add_parser("build")
@@ -1668,7 +1707,10 @@ def main():
     v = sp.add_parser("validate")
     v.add_argument("--rid", required=True)
     v.add_argument("--rules", required=True, nargs="+")
-    a = ap.parse_args()
+    a = ap.parse_args(repair_argv(sys.argv[1:], "combine.py", USAGE))
+    for k in ("biz", "rules"):  # 多文件参数：逗号拼接也拆开（路径不含逗号）
+        if isinstance(getattr(a, k, None), list):
+            setattr(a, k, [x.strip() for f in getattr(a, k) for x in f.split(",") if x.strip()])
     {"names": cmd_names, "build": cmd_build, "plan": cmd_plan, "validate": cmd_validate, "rules": cmd_rules, "props": cmd_props, "result": cmd_result, "summary": cmd_summary}[a.cmd](a)
 
 

@@ -5,7 +5,7 @@ RunSkillScript 的脚本（detail.py / combine.py）回归：用 v25 一次真�
 import json, os, shutil, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPTS = os.path.join(os.path.dirname(HERE), "skills", "admission-v41-claude-catalog", "scripts")
+SCRIPTS = os.path.join(os.path.dirname(HERE), "skills", "admission-v0-1-catalog", "scripts")
 FX = os.path.join(HERE, "fixtures", "v25_run")
 RID = "ontology_agent_job_43_115-am2"
 
@@ -1048,6 +1048,48 @@ class ScriptTests(unittest.TestCase):
         rc, out = run(self.ws, "detail.py", "fill", "--rid", RID, stdin=json.dumps({"rows": [["F01", "3", "业务场景照片｜共3张"]]}, ensure_ascii=False))
         self.assertIn("SKIP F01", out)
         self.assertNotIn("REJECT", out)
+
+
+class ArgsGuardTests(unittest.TestCase):
+    """模型把整条命令（含大量换行、逗号拼路径、init 多写 --rid）塞进 args 一项：脚本拆开照常执行；真错给可修正提示。"""
+
+    def setUp(self):
+        self.ws = tempfile.mkdtemp()
+        for f in ("biz_D.txt", "biz_B.txt", "biz_T.txt", "rules.json", "props.json"):
+            shutil.copy(os.path.join(FX, f), self.ws)
+
+    def tearDown(self):
+        shutil.rmtree(self.ws, ignore_errors=True)
+
+    def items(self):
+        return json.load(open(os.path.join(self.ws, "work", RID, "input-extract-detail.json"), encoding="utf-8"))["items"]
+
+    def test_packed_init_runs_like_the_split_call(self):
+        rc, out = run(self.ws, "detail.py", "init", "--biz", "biz_D.txt", "biz_B.txt", "biz_T.txt", "--rules", "rules.json",
+                      stdin=read("init_spec.json"))
+        self.assertEqual(rc, 0, out)
+        want = self.items()
+        shutil.rmtree(os.path.join(self.ws, "work"))
+        packed = "\n" * 200 + "init --rid %s --biz biz_D.txt,biz_B.txt,biz_T.txt --rules rules.json" % RID + "\n" * 200
+        rc, out = run(self.ws, "detail.py", packed, stdin=read("init_spec.json"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("WARN ARGS_REPACKED", out)
+        self.assertNotIn("工商文件读不了", out)
+        self.assertEqual(self.items(), want)
+
+    def test_init_rid_must_match_ctx(self):
+        rc, out = run(self.ws, "detail.py", "init", "--rid", "other", "--biz", "biz_D.txt", stdin=read("init_spec.json"))
+        self.assertEqual(rc, 2, out)
+        self.assertIn("init 不需要 --rid", out)
+
+    def test_bad_args_print_a_fixable_hint(self):
+        for script, args in (("detail.py", ["inti", "--biz", "a"]), ("detail.py", ["fill"]),
+                             ("combine.py", ["build", "--rid"])):
+            rc, out = run(self.ws, script, *args)
+            self.assertEqual(rc, 2, out)
+            self.assertIn("ERROR INVALID_SCRIPT_ARGS", out)
+            self.assertIn("HINT 用法", out)
+            self.assertIn("不要再试", out)
 
 
 if __name__ == "__main__":

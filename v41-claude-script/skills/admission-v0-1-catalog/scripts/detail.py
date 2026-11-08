@@ -29,7 +29,7 @@ from datetime import date
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 CAT = os.path.realpath(os.path.join(HERE, ".."))
-CONTRACT = "admission-noshell-v41-claude"
+CONTRACT = "admission-noshell-v0-1"
 RID_OK = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 N_RE = re.compile(r"R(0[1-9]|1[0-5])｜.{4,}", re.S)
 PREFIX_RE = re.compile(r"^[YN]\s*[｜|]\s*")
@@ -518,6 +518,8 @@ def cmd_init(a):
     if not isinstance(req, dict):
         die("request 必须是对象")
     rid = ctx["requestId"]
+    if a.rid and a.rid != rid:  # init 的 requestId 以 stdin ctx 为准；--rid 只是兼容多写
+        die("init --rid=%s 与 stdin ctx.requestId=%s 不一致；init 不需要 --rid，删掉它" % (a.rid, rid), 2)
     warnings = spec.get("warnings") or []
     items = load_items()
     for msg in check_anchors(items):
@@ -1358,10 +1360,50 @@ def cmd_recheck(a):
     sys.exit(1 if errs else 0)
 
 
+# ---- 参数防呆（RunSkillScript 不是 shell，模型偶尔把整条命令连同大量换行塞进 args 的一项） ----
+def _packed(x):
+    return x != x.strip() or any(ord(ch) < 32 for ch in x) or re.search(r"\s-{1,2}[A-Za-z]", x) is not None
+
+
+def repair_argv(argv, script, usage):
+    """把塞进一项的整条命令拆回逐项（按空白拆；本流程的路径都是 tool-results/… 无空格），打印 WARN 后照常执行。"""
+    if not any(_packed(x) for x in argv):
+        return argv
+    import shlex
+    out = []
+    for x in argv:
+        if _packed(x):
+            try:
+                out.extend(shlex.split(x))
+            except ValueError:
+                out.extend(x.split())
+        else:
+            out.append(x)
+    print("WARN ARGS_REPACKED args 把整条命令或换行塞进了一项，脚本已拆成 %d 项照常执行：%s。"
+          "下次调用请 args 一词一项。用法：%s" % (len(out), " ".join(out)[:300], usage))
+    return out
+
+
+class ArgParser(argparse.ArgumentParser):
+    """参数错误时给出能照着改的提示（exit 2），不让模型只看到 argparse 原话。"""
+    usage_hint = ""
+
+    def error(self, message):
+        print("ERROR INVALID_SCRIPT_ARGS " + " ".join(message.split())[:300])
+        print("HINT 用法：" + self.usage_hint)
+        print("HINT args 一词一项、不带换行；按提示改一次后重跑。同一参数错误第二次出现就不要再试，"
+              "把原话记入 toolIssues，按“技能配置异常”处理")
+        sys.exit(2)
+
+USAGE = 'init --biz <工商文件>... --rules <规则文件>...（init 不带 --rid，requestId 从 stdin ctx 取）；fill/finish/show/compare/recheck --rid <requestId>；例 args=["init","--biz","文件1","文件2","文件3","--rules","规则文件1","机构规则文件"]'
+
+
 def main():
-    ap = argparse.ArgumentParser()
-    sp = ap.add_subparsers(dest="cmd", required=True)
+    ArgParser.usage_hint = USAGE
+    ap = ArgParser()
+    sp = ap.add_subparsers(dest="cmd", required=True, parser_class=ArgParser)
     i = sp.add_parser("init")
+    i.add_argument("--rid", default=None)  # 兼容模型多写；以 stdin ctx.requestId 为准
     i.add_argument("--biz", nargs="*", default=[])
     i.add_argument("--rules", nargs="+")
     f = sp.add_parser("fill")
@@ -1376,7 +1418,10 @@ def main():
     c.add_argument("--rid", required=True)
     rc_ = sp.add_parser("recheck")
     rc_.add_argument("--rid", required=True)
-    a = ap.parse_args()
+    a = ap.parse_args(repair_argv(sys.argv[1:], "detail.py", USAGE))
+    for k in ("biz", "rules"):  # 多文件参数：逗号拼接也拆开（路径不含逗号）
+        if isinstance(getattr(a, k, None), list):
+            setattr(a, k, [x.strip() for f in getattr(a, k) for x in f.split(",") if x.strip()])
     {"init": cmd_init, "fill": cmd_fill, "finish": cmd_finish, "show": cmd_show,
      "compare": cmd_compare, "recheck": cmd_recheck}[a.cmd](a)
 

@@ -1,3 +1,36 @@
+## 当前修订：RunSkillScript 参数塞成一项的防呆（2026-11-08）
+
+需求（用户）：trace `7bd54b0ab98c829ccfb8a69d0722ae10` 的 `REPLY_FAILED`（phase=tool，RunSkillScript）。根因：模型把 `init --rid … --biz a,b,c --rules x,y` 连同数百个换行塞进 `args` 的一项，`detail.py` 在 argparse 阶段退出（exit 2，`invalid choice`）。另一个潜在错误：`init` 本来不收 `--rid`，就算拆对了也会报 `unrecognized arguments`。网关（WanScope）不改，防呆全部放在本目录。
+
+| 文件 | 改动 |
+|---|---|
+| `detail.py`、`combine.py` | ①`repair_argv`：某项含换行/控制字符、首尾空白，或像整条命令（空白后跟 `-x`/`--x`），按空白拆回逐项（本流程路径都是 `tool-results/…`，没有空格），打印 `WARN ARGS_REPACKED` 后照常执行；②`--biz`、`--rules` 逗号拼接的路径也拆开（以前只有 `--biz` 兼容）；③参数错误统一输出 `ERROR INVALID_SCRIPT_ARGS` + 用法 + “改一次，同一错误第二次出现就不再试”，exit 2 |
+| `detail.py init` | 接受多写的 `--rid`，与 stdin `ctx.requestId` 不一致时报错（exit 2）；requestId 仍以 ctx 为准 |
+| 主提示词“脚本路径固定”段、第 2 轮 init | 写明 args 一词一项并给对/错示例；init 不带 `--rid`；`WARN ARGS_REPACKED` 结果有效、不重跑；参数错误最多修正重试 1 次，再错记 toolIssues、按“技能配置异常”处理 |
+| 测试 | 新增 3 条 `ArgsGuardTests`：原样复现塞成一项的 init（前后各 200 个换行、逗号拼路径、多写 --rid），产出与逐项调用完全一致；init `--rid` 不一致报错；detail/combine 参数错误打印可修正提示。全部 117 条通过 |
+| 版本 | catalog `SKILL.md.zip` 重打包；`runtime_manifest.json` 重算（runtime 41 981 → 42 321，script 163 073 → 166 753） |
+
+**需留意**：①按空白拆分的前提是路径不含空格；含空格的路径会被拆错，表现为“文件读不了”的 WARN。②模型输出数百个换行属于生成退化，脚本只能兜住这一次调用；本次 `REPLY_FAILED` 是否还有调用失败之后的其他原因，要看 trace 末尾。③网关侧在启动脚本前拦截（`INVALID_SCRIPT_ARGS`）按要求没做，以后要做可以把这里的判断移过去。
+
+---
+
+## 当前修订：营业执照清单调整——公司鲜章与登记机关章分开（2026-11-08）
+
+需求（用户）：清单改了营业执照条目：B12 改为「是否彩色」、B13 改为「是否有公司的鲜章」（公司红色公章，不是颁发机关的章）；删 B21「盖章名称」；新增 B27「是否有登记机关的章」；B18/B19/B22/B23/B26 的 desc 精简。清单仍是 163 条（删一条、加一条）。
+
+| 文件 | 改动 |
+|---|---|
+| `extract-items-checked.json` | B27 的 desc 写明口径：看执照自带的登记机关（颁发机关）章，不是公司公章；看到 true，没看到 false，拿不准 N R06 |
+| materials skill 营业执照行 | 去掉 B21；画面判断里写明 B13 是公司鲜章（不是颁发机关的章）、新增 B27 登记机关的章，二者分开判断 |
+| facts skill 第 4 点 | 读图判断行改为「B12–B14 彩色/公司鲜章/清晰、B27 登记机关的章」，B27 由模型提交，不是脚本派生 |
+| `integration/fixtures/v25_run/fill_spec.json` | 夹具里的 B21 换成 B27（true，登记机关处红色圆章） |
+| `references/examples/input-extract-detail.example.json` | 按新清单同步名称、desc，删 B21、加 B27 |
+| 版本 | 七个 `SKILL.md.zip` 重打包；`runtime_manifest.json` 重算（runtime 41 927 → 41 981，script 163 073 不变） |
+
+**需留意**：①脚本未改——B27 不由脚本派生，由模型读图填。②B12/B13 的 desc 变短后，原先「黑白件没看到章必须 false」「彩色件不要求章」的判断口径没了，影像合格（彩色，或非彩色但可见鲜章）改由 facts skill 第 3 点和规则本身综合判断；B13 现在只认公司章，执照上的登记机关章不再算。③B21 删除后，规则里若有引用「盖章名称」的键，组装时会 skip，请确认规则侧不依赖它。④测试 test_scripts 57、test_combine_tool 1、test_rule_ledger 14、test_summary 35、test_model_mapping 7 全部通过。
+
+---
+
 ## 当前修订：接入 inst-rc-rule-mcp 机构风控规则（2026-11-08）
 
 需求（用户）：inst-rc-rule-mcp 和 mcp_list_rule 一起调用，返回 `{"model":[{"companyName":"Employer.employer_name CONTAINS [修匀]"},{"projectName":"Project.project_name CONTAINS [修匀]"}]}`；规则里的参数 `Employer.employer_name`、`Project.project_name` 在调 mcp_run_process 时一起传。v40-1 里这两条规则（`<hrInstId>-companyName/-projectName`）全部因“属性不存在 / Project 对象不存在”跳过。
@@ -36,7 +69,7 @@
 
 ---
 
-# v41-claude（admission-noshell-v41-claude，修订 41-claude.1）：修 71/80 号失败的死循环；租赁合同双方盖章（新增 G11）、租赁材料错传改由提示词约定
+# v0.1（admission-noshell-v0-1，修订 0.1）：修 71/80 号失败的死循环；租赁合同双方盖章（新增 G11）、租赁材料错传改由提示词约定
 
 **基线：v40-claude 40-claude.1。依据：v39-1 / v40-1 同输入 63 单对比（`outputs/ontology-v39-v40-20261108/对比报告.md`），本次复核确认其结论成立：v40 准确性较好（同范围确认错误 32→16），但错误仍集中在租赁合同两类，且两版都有。**
 
@@ -76,7 +109,7 @@
 
 ## 部署
 
-- WanScope 上七个 skill 换成 `admission-v41-claude-*`（各目录 `SKILL.md.zip`），主提示词换成 `主提示词_v41-claude_编排版.md`。
+- WanScope 上七个 skill 换成 `admission-v0-1-*`（各目录 `SKILL.md.zip`），主提示词换成 `主提示词_v0-1_编排版.md`。
 
 ---
 

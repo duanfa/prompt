@@ -1,40 +1,40 @@
 {
-  "contract": "admission-noshell-v41-claude",
-  "revision": "41-claude.1",
-  "runtime_characters": 41927,
+  "contract": "admission-noshell-v0-1",
+  "revision": "0.1",
+  "runtime_characters": 42321,
   "files": [
     {
-      "path": "主提示词_v41-claude_编排版.md",
-      "sha256": "c4b11f6cd3d5750251af0992f9cc3aca86ec5ab2f1da367c93a5433f50400f43"
+      "path": "主提示词_v0-1_编排版.md",
+      "sha256": "fabd3bf288c06557e84d73baa6cb5cfd3f973ee1f439a67b03799194dc21181e"
     },
     {
-      "path": "skills/admission-v41-claude-business/SKILL.md",
-      "sha256": "7414d6ed705ac20c1710f7c20743879852984a8c4f709759d13e8cdbb2a989f1"
+      "path": "skills/admission-v0-1-business/SKILL.md",
+      "sha256": "ced24def132a8107fa5ea365b078a0e247f7790908496bc0759577bdb58dcf2a"
     },
     {
-      "path": "skills/admission-v41-claude-catalog/SKILL.md",
-      "sha256": "a611aacb1e9a9a2efd5c6ef20953661dfaae5ffe7bae3a0086ed0cb2527531b9"
+      "path": "skills/admission-v0-1-catalog/SKILL.md",
+      "sha256": "4e79def3dd53b6e67f5691933659a010fb5e37362cade9e6e60aedd1ab9332f1"
     },
     {
-      "path": "skills/admission-v41-claude-discover/SKILL.md",
-      "sha256": "3e458cb5e43c4ad83b4d64880d07eb80a480273466ce24cbdd6c4c5d11389ce0"
+      "path": "skills/admission-v0-1-discover/SKILL.md",
+      "sha256": "f369bfef666c7b4b281918102d1206a33e3989f6ddafae114a406f5817a6d614"
     },
     {
-      "path": "skills/admission-v41-claude-facts/SKILL.md",
-      "sha256": "221a6f9dc57f5bcc598a1c0894a183bc7da4e3f0471c6ae6bdc48f076fdeab4a"
+      "path": "skills/admission-v0-1-facts/SKILL.md",
+      "sha256": "0498c6e01bad0a6c48b3a8a0c0418c6fdd245766edd84e5d09d7ebdfdf793504"
     },
     {
-      "path": "skills/admission-v41-claude-materials/SKILL.md",
-      "sha256": "8facf9d80b4f905a9154b7364530cc676f87cc55d3d7df159e0ad8855a5d467e"
+      "path": "skills/admission-v0-1-materials/SKILL.md",
+      "sha256": "11196c4e79e36b233d88225a32de437cfabacbf2e90e561634d5c9117519d74f"
     },
     {
-      "path": "skills/admission-v41-claude-output/SKILL.md",
-      "sha256": "ef145e02cb5217701fad28901aeae55cbe4135860699e1609fb4766d20b6127f"
+      "path": "skills/admission-v0-1-output/SKILL.md",
+      "sha256": "30f07700289699f2af90599b7ceebbee4c0a976bc739146d1378c5d3599023d5"
     },
     {
-      "path": "skills/admission-v41-claude-video/SKILL.md",
-      "sha256": "f31771e440cdfbe3a942a713032bd5881093fe949579568e86d27fd767dcd692"
+      "path": "skills/admission-v0-1-video/SKILL.md",
+      "sha256": "1644ce48d676531b6d773235e0268e4173cd528ca1a09b99850dfdf9a5442c75"
     }
   ],
-  "script_characters": 163073
+  "script_characters": 166753
 }

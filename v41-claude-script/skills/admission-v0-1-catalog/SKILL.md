@@ -1,11 +1,11 @@
 ---
-name: admission-v41-claude-catalog
+name: admission-v0-1-catalog
 description: 提取清单：以人工核对过的清单为全量提取目标，规定 input-extract-detail.json 的格式、来源写法和未提取原因码。
 metadata:
-  prompt-contract: admission-noshell-v41-claude
-  prompt-version: "41-claude.1"
+  prompt-contract: admission-noshell-v0-1
+  prompt-version: "0.1"
 ---
-# admission-noshell-v41-claude / admission-v41-claude-catalog
+# admission-noshell-v0-1 / admission-v0-1-catalog
 
 # 提取清单与 input-extract-detail.json
 
