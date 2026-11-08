@@ -1,0 +1,367 @@
+{
+ "code": 0,
+ "msg": "success",
+ "requestId": "v35-am1",
+ "data": [
+  {
+   "name": "Employer",
+   "label": "Employer",
+   "comment": null,
+   "properties": [
+    {
+     "name": "enterprise_type",
+     "label": "企业类型",
+     "comment": "枚举 EnterpriseType：有限公司、股份公司、个体工商户、个人独资企业、分公司、合伙企业、其他合法组织"
+    },
+    {
+     "name": "independent_employment_qualification",
+     "label": "是否具备独立用工主体资格",
+     "comment": null
+    },
+    {
+     "name": "established_months",
+     "label": "已成立月数",
+     "comment": null
+    },
+    {
+     "name": "supplement_main_business_verified",
+     "label": "补充材料后主营已验证",
+     "comment": null
+    },
+    {
+     "name": "enterprise_legal_violation_record",
+     "label": "企业违法犯罪记录核查",
+     "comment": "枚举 ScreeningResult：未命中、命中、无法查询"
+    },
+    {
+     "name": "legal_rep_legal_violation_record",
+     "label": "法定代表人违法犯罪记录核查",
+     "comment": "枚举 ScreeningResult：未命中、命中、无法查询"
+    },
+    {
+     "name": "actual_controller_legal_violation_record",
+     "label": "实际控制人违法犯罪记录核查",
+     "comment": "枚举 ScreeningResult：未命中、命中、无法查询"
+    },
+    {
+     "name": "enterprise_negative_info",
+     "label": "企业负面信息核查",
+     "comment": "枚举 ScreeningResult：未命中、命中、无法查询"
+    },
+    {
+     "name": "legal_rep_negative_info",
+     "label": "法定代表人负面信息核查",
+     "comment": "枚举 ScreeningResult：未命中、命中、无法查询"
+    },
+    {
+     "name": "actual_controller_negative_info",
+     "label": "实际控制人负面信息核查",
+     "comment": "枚举 ScreeningResult：未命中、命中、无法查询"
+    },
+    {
+     "name": "workplace_address_type",
+     "label": "经营场地地址性质",
+     "comment": "枚举 WorkplaceAddressType：真实经营场所、虚拟地址、挂靠地址"
+    },
+    {
+     "name": "lease_contract_status",
+     "label": "房租合同租期状态",
+     "comment": "枚举 LeaseContractStatus：在租期内、已过租期"
+    },
+    {
+     "name": "workplace_verified",
+     "label": "实体经营场所核实结果",
+     "comment": "枚举 WorkplaceVerification：已核实存在、已核实不存在、未核实"
+    },
+    {
+     "name": "main_business_queryable",
+     "label": "主营业务可查询",
+     "comment": null
+    },
+    {
+     "name": "main_business_verifiable",
+     "label": "主营业务可验证",
+     "comment": null
+    },
+    {
+     "name": "main_business_consistent",
+     "label": "主营与申报一致",
+     "comment": null
+    },
+    {
+     "name": "scope_sensitive",
+     "label": "经营范围是否敏感",
+     "comment": null
+    },
+    {
+     "name": "usage_isolated",
+     "label": "用工是否与敏感经营隔离",
+     "comment": null
+    },
+    {
+     "name": "admission_submitted_at",
+     "label": "入网申请提交时间",
+     "comment": null
+    },
+    {
+     "name": "enterprise_name",
+     "label": "企业名称",
+     "comment": null
+    },
+    {
+     "name": "business_license_establish_date",
+     "label": "营业执照成立日期",
+     "comment": null
+    },
+    {
+     "name": "usage_scenario",
+     "label": "用工场景",
+     "comment": "枚举 IndustryCategory：金融类、传销类、违法类、高危类、同业类、敏感类、音视频制作、一般行业"
+    },
+    {
+     "name": "peer_platform_merchant",
+     "label": "是否同属互联网灵活用工平台",
+     "comment": null
+    },
+    {
+     "name": "institution_name_hit",
+     "label": "机构企业名称规则命中",
+     "comment": null
+    },
+    {
+     "name": "institution_project_hit",
+     "label": "机构项目名称规则命中",
+     "comment": null
+    },
+    {
+     "name": "institution_industry_hit",
+     "label": "机构限制行业命中",
+     "comment": null
+    },
+    {
+     "name": "institution_rule_hit",
+     "label": "机构规则是否命中",
+     "comment": null
+    },
+    {
+     "name": "admission_disposition",
+     "label": "准入处置",
+     "comment": "枚举 Disposition：无需处置、交风控、补充材料、转人工复核、禁入"
+    }
+   ]
+  },
+  {
+   "name": "AdmissionDoc",
+   "label": "AdmissionDoc",
+   "comment": null,
+   "properties": [
+    {
+     "name": "validation_status",
+     "label": "资料逐项校验结果",
+     "comment": "枚举 DocValidationStatus：校验通过、校验需补正、校验不成立、校验转人工、校验判禁入"
+    },
+    {
+     "name": "business_license_status",
+     "label": "营业执照登记状态",
+     "comment": "枚举 BusinessLicenseStatus：存续、已届满、已注销"
+    },
+    {
+     "name": "business_license_image_ok",
+     "label": "营业执照影像合格",
+     "comment": null
+    },
+    {
+     "name": "id_card_sides_complete",
+     "label": "身份证正反面齐全",
+     "comment": null
+    },
+    {
+     "name": "id_card_valid_status",
+     "label": "身份证有效期状态",
+     "comment": "枚举 IdCardValidity：有效、已过期"
+    },
+    {
+     "name": "id_card_image_ok",
+     "label": "身份证影像合格",
+     "comment": null
+    },
+    {
+     "name": "legal_person_consistent",
+     "label": "持证人与法人一致",
+     "comment": null
+    },
+    {
+     "name": "admin_info_complete",
+     "label": "管理员信息完整",
+     "comment": null
+    },
+    {
+     "name": "admin_phone_verified",
+     "label": "管理员手机已验证",
+     "comment": null
+    },
+    {
+     "name": "registration_basic_info_filled",
+     "label": "登记表基本信息已填",
+     "comment": null
+    },
+    {
+     "name": "registration_usage_filled",
+     "label": "登记表用工场景已填",
+     "comment": null
+    },
+    {
+     "name": "registration_task_volume_filled",
+     "label": "登记表任务量已填",
+     "comment": null
+    },
+    {
+     "name": "registration_invoice_category_filled",
+     "label": "登记表发票类目已填",
+     "comment": null
+    },
+    {
+     "name": "registration_actual_match",
+     "label": "登记表与实情一致",
+     "comment": null
+    },
+    {
+     "name": "bank_account_name_consistent",
+     "label": "账户名称与执照一致",
+     "comment": null
+    },
+    {
+     "name": "bank_account_nature",
+     "label": "账户性质",
+     "comment": "枚举 BankAccountNature：基本户、一般户、其他账户"
+    },
+    {
+     "name": "workplace_video_ok",
+     "label": "职场视频一镜到底",
+     "comment": null
+    },
+    {
+     "name": "workplace_real",
+     "label": "职场视频场景真实",
+     "comment": null
+    },
+    {
+     "name": "scene_photo_count",
+     "label": "业务场景照数量",
+     "comment": null
+    },
+    {
+     "name": "scene_photo_evidence_ok",
+     "label": "场景照能说明交付",
+     "comment": null
+    },
+    {
+     "name": "supplement_invoice_related_party",
+     "label": "补充发票由关联方开具",
+     "comment": null
+    },
+    {
+     "name": "supplement_contract_matched",
+     "label": "补充合同与发票配套",
+     "comment": null
+    },
+    {
+     "name": "supplement_alt_materials_ok",
+     "label": "替代材料到位",
+     "comment": null
+    },
+    {
+     "name": "supplement_evidence_kinds",
+     "label": "补充证据种类数",
+     "comment": null
+    },
+    {
+     "name": "business_license_expiry_date",
+     "label": "营业执照到期日",
+     "comment": null
+    },
+    {
+     "name": "lease_contract_both_sealed",
+     "label": "租赁合同双方盖章",
+     "comment": null
+    },
+    {
+     "name": "scene_photo_authenticity",
+     "label": "现场照片真实性",
+     "comment": null
+    },
+    {
+     "name": "registration_stage_complete",
+     "label": "注册阶段资料齐全",
+     "comment": null
+    },
+    {
+     "name": "sign_stage_complete",
+     "label": "签约阶段资料齐全",
+     "comment": null
+    },
+    {
+     "name": "settlement_stage_complete",
+     "label": "结算阶段资料齐全",
+     "comment": null
+    }
+   ]
+  },
+  {
+   "name": "Request",
+   "label": "Request",
+   "comment": null,
+   "properties": [
+    {
+     "name": "industry_category",
+     "label": "所属行业类别",
+     "comment": "枚举 IndustryCategory：金融类、传销类、违法类、高危类、同业类、敏感类、音视频制作、一般行业"
+    },
+    {
+     "name": "promotion_model",
+     "label": "分销返利模式",
+     "comment": "枚举 PromotionModel：一层正常经销、多级分销"
+    },
+    {
+     "name": "peer_cooperation_mode",
+     "label": "同业合作形式",
+     "comment": "枚举 PeerCooperationMode：普通商户身份、大商户形式合作"
+    },
+    {
+     "name": "actual_business_category",
+     "label": "实际业务类别",
+     "comment": "枚举 IndustryCategory：金融类、传销类、违法类、高危类、同业类、敏感类、音视频制作、一般行业"
+    }
+   ]
+  },
+  {
+   "name": "RuleVersion",
+   "label": "RuleVersion",
+   "comment": null,
+   "properties": [
+    {
+     "name": "rule_version_is_latest",
+     "label": "是否最新一版",
+     "comment": null
+    },
+    {
+     "name": "rule_version_effective_to",
+     "label": "失效时间",
+     "comment": null
+    }
+   ]
+  },
+  {
+   "name": "ComplianceCheck",
+   "label": "ComplianceCheck",
+   "comment": null,
+   "properties": [
+    {
+     "name": "checked_at",
+     "label": "核对完成时间",
+     "comment": null
+    }
+   ]
+  }
+ ]
+}
