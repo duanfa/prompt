@@ -683,6 +683,80 @@ def flex_job_notes(by):
     return out
 
 
+# v42：清单条目的 notice（[{"condition","desc"}]）：哪条 condition 命中由模型在草稿 notice 里按语义判断，
+# desc 原样（换成业务用语后）进“注意”，作为依据/下一步的补充；依据/下一步已写过的不重复。
+NOTICE_PUNCT = re.compile(r"[\s，,。；;：:、「」“”\"'（）()！!？?]")
+
+
+def notice_candidates(rid):
+    """清单里带 notice 的条目与本次明细行：[(清单条目, 明细行)]。"""
+    fp = os.path.join("work", rid, "input-extract-detail.json")
+    if not os.path.isfile(fp):
+        return []
+    by = {x["id"]: x for x in ct.load(fp).get("items", [])}
+    return [(it, by[it["id"]]) for it in dt.load_items() if it.get("notice") and it["id"] in by]
+
+
+def notice_literal(it, row):
+    """值与 condition 字面相同（忽略大小写、首尾空白）的条件：仅作预判，没有草稿或草稿没给 notice 时用。"""
+    if not (row.get("source") or "").startswith("Y｜") or row.get("value") is None:
+        return []
+    v = str(row["value"]).strip().lower()
+    return [n["condition"].strip() for n in it["notice"] if n["condition"].strip().lower() == v]
+
+
+def pick_notices(rid, picks, covered):
+    """校验模型选的 notice（picks=None 时用字面预判），返回 (要进“注意”的话, 丢弃说明)。不合格只丢弃、不退回。"""
+    cands = {it["id"]: (it, row) for it, row in notice_candidates(rid)}
+    if not cands:
+        return [], []
+    dropped = []
+    if picks is None:
+        picks = [{"id": i, "condition": c} for i, (it, row) in cands.items() for c in notice_literal(it, row)]
+    elif not isinstance(picks, list):
+        return [], ["notice 不是数组，已忽略"]
+    seen_text = NOTICE_PUNCT.sub("", " ".join(covered))
+    out, seen = [], set()
+    for k, p in enumerate(picks, 1):
+        if not (isinstance(p, dict) and isinstance(p.get("id"), str) and isinstance(p.get("condition"), str)):
+            dropped.append('notice[%d] 格式应为 {"id":"条目ID","condition":"清单里的条件原文"}' % k)
+            continue
+        i, c = p["id"].strip(), p["condition"].strip()
+        if i not in cands:
+            dropped.append("notice[%d] 的 %s 不是带 notice 的条目" % (k, i))
+            continue
+        n = next((x for x in cands[i][0]["notice"] if x["condition"].strip() == c), None)
+        if n is None:
+            dropped.append("notice[%d] 的条件「%s」不在 %s 的 notice 里（须逐字抄清单里的 condition）" % (k, c, i))
+            continue
+        if (i, c) in seen:
+            continue
+        seen.add((i, c))
+        t = plain(n["desc"], rid).strip().rstrip("。；;")
+        key = NOTICE_PUNCT.sub("", t)
+        if key and key in seen_text:
+            dropped.append("notice[%d] %s「%s」依据/下一步已写过，不重复" % (k, i, t))
+            continue
+        out.append(t + "。")
+    return out, dropped
+
+
+def print_notice_hint(rid):
+    cands = notice_candidates(rid)
+    if not cands:
+        return
+    print("NOTICE 以下条目配置了“注意”提醒（id|名称|本次值|依据/原因｜可选条件 condition=>告知内容）。按语义判断本次哪条 condition 成立"
+          "（condition 有时是值、有时是文字描述），成立的写进草稿 notice；依据或下一步已经说过同一件事的不要选，"
+          "notice 只作依据/下一步的补充；analysis 也不要重复。脚本把 desc 原样放进“注意”，你不用写这句话：")
+    for it, row in cands:
+        src = (row.get("source") or "（待填）")
+        pre = notice_literal(it, row)
+        print("  %s|%s|%s|%s｜%s%s" % (it["id"], it["name"], row.get("value"), clip(src, 80),
+                                     "；".join("%s=>%s" % (n["condition"], n["desc"]) for n in it["notice"]),
+                                     "（字面预判：%s）" % "、".join(pre) if pre else ""))
+    print('  草稿 notice 写法：[{"id":"条目ID","condition":"清单里的 condition 原文"}]；都不成立写 []。不写 notice 字段时脚本按字面预判。')
+
+
 def need_basis_ctx(doc):
     """结论级别、该级别命中、其余级别命中（通过级除外）。summary 与 result 共用。"""
     lad, fn, hits = ladder(), doc["funnel"], doc["hits"]
@@ -717,6 +791,7 @@ def print_need_basis(rid, doc):
     fp_ = os.path.join("work", rid, "input-extract-detail.json")
     if os.path.isfile(fp_) and flex_job_notes({x["id"]: x for x in ct.load(fp_)["items"]}):
         print("FLEX_JOB 企业属灵工受限行业，但本次招聘的是临时辅助岗位：脚本已在“注意”里写了例外提醒。命中行业类规则时，下一步可建议对方补充岗位说明（工作内容、地点、时长，说明不涉及本行业业务），供人工核实；不要在依据里否定规则结论，也不要在 analysis 里重复。")
+    print_notice_hint(rid)
     q = quotable(rid)
     if q:
         print("可放进「」的原文（逐字抄，可用…省略中间；不在这里、也不在明细里的内容不要加「」）：")
@@ -726,7 +801,7 @@ def print_need_basis(rid, doc):
           "如项目内容/交付要求暗示的业务模式与经营范围、开票类目不符，材料之间日期/主体/金额对不上，关键材料缺失导致多条规则跳过，"
           "附件类型与字段要求不符等；只写提取明细里有依据的现象，用“疑似/建议核实”表述，不下违规结论，不写规则ID/属性名；没有就不写。"
           "这一项不合格只会被丢弃，不会退回。" % ((MAX_ANALYSIS,) + ANALYSIS_LEN))
-    print('草稿格式：{"basis":[{"ruleIds":["…"],"text":"一句中文"}],"next":["一句中文",{"ruleIds":["其余级别规则ID"],"text":"一句中文"}],"analysis":["一句中文"]}（next 里只有覆盖其余级别规则的事项需要带 ruleIds；通过级只写 basis，ruleIds 可省；文字不含规则ID/英文属性名/【】，引用资料原文放「」里逐字）')
+    print('草稿格式：{"basis":[{"ruleIds":["…"],"text":"一句中文"}],"next":["一句中文",{"ruleIds":["其余级别规则ID"],"text":"一句中文"}],"notice":[{"id":"条目ID","condition":"条件原文"}],"analysis":["一句中文"]}（next 里只有覆盖其余级别规则的事项需要带 ruleIds；通过级只写 basis，ruleIds 可省；文字不含规则ID/英文属性名/【】，引用资料原文放「」里逐字）')
     print("草稿被拒 %d 次后，下一次提交由脚本丢弃不合格的条目并用规则说明补齐，不再退回。" % LENIENT_AFTER)
 
 
@@ -959,6 +1034,11 @@ def cmd_summary(a):
 
     concl = "%s｜%s" % (L["level"], L["title"]) if L else "暂无结论｜%s" % why_plain(fn["why"])
     att = attention_lines(a.rid)
+    picks = draft.get("notice") if lv is not None and isinstance(draft, dict) and "notice" in draft else None
+    notices, n_dropped = pick_notices(a.rid, picks, basis + nxt)
+    for e in n_dropped:
+        print("NOTICE_DROPPED " + e)
+    att = list(dict.fromkeys(att + notices))
     if analysis:                         # v38：模型的全局分析作为“注意”的最后一条，明确标注仅供参考
         att.append("%s：%s。" % (cfg.get("analysisLabel", "agent全局分析（仅供参考）"), "；".join(analysis)))
     if os.path.isfile(tries_path(a.rid)):
@@ -973,7 +1053,7 @@ def cmd_summary(a):
             json.dump(draft, f, ensure_ascii=False, indent=1)
     with open(os.path.join("work", a.rid, "summary-final.json"), "w", encoding="utf-8") as f:
         json.dump({"summary": summ}, f, ensure_ascii=False, indent=1)
-    print("OK 结论 %s；依据 %d 条；下一步 %d 条" % (L["level"] if L else "无", len(basis), len(nxt)))
+    print("OK 结论 %s；依据 %d 条；下一步 %d 条；注意提醒 %d 条" % (L["level"] if L else "无", len(basis), len(nxt), len(notices)))
     print("SUMMARY " + jstr(summ))
     final = final_output(a.rid, summ)
     if final is not None:

@@ -125,6 +125,29 @@ def check_derive_specs(items):
     return bad
 
 
+def check_notice_specs(items):
+    """v42：清单条目可带 "notice": [{"condition": "命中条件（值或文字描述）", "desc": "告知用户的话"}]。
+    哪条 condition 命中由模型在 summary 草稿里按语义判断，desc 原样进 summary 的“注意”（依据/下一步已写过的不重复）。"""
+    bad = []
+    for it in items:
+        ns = it.get("notice")
+        if ns is None:
+            continue
+        if not (isinstance(ns, list) and ns):
+            bad.append("%s 的 notice 须为非空数组" % it["id"])
+            continue
+        conds = []
+        for k, n in enumerate(ns, 1):
+            if not (isinstance(n, dict) and isinstance(n.get("condition"), str) and n["condition"].strip()
+                    and isinstance(n.get("desc"), str) and n["desc"].strip()):
+                bad.append("%s 的 notice[%d] 须为 {\"condition\":非空字符串,\"desc\":非空字符串}" % (it["id"], k))
+            else:
+                conds.append(n["condition"].strip())
+        if len(conds) != len(set(conds)):
+            bad.append("%s 的 notice 里 condition 有重复" % it["id"])
+    return bad
+
+
 def short_name(item):
     return item["name"].rsplit(".", 1)[-1]
 
@@ -613,6 +636,9 @@ def cmd_init(a):
     bad = check_derive_specs(items)
     if bad:
         die("清单 derive 声明有误（extract-items-checked.json）：" + "；".join(bad))
+    bad = check_notice_specs(items)
+    if bad:
+        die("清单 notice 声明有误（extract-items-checked.json）：" + "；".join(bad))
     row = {i["id"]: {"id": i["id"], "name": i["name"], "desc": i["desc"], "value": None, "source": ""} for i in items}
     order = [i["id"] for i in items]
     pre, issues = set(), []
