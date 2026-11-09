@@ -689,33 +689,65 @@ def flex_job_notes(by):
 NOTICE_PUNCT = re.compile(r"[\s，,。；;：:、「」“”\"'（）()！!？?]")
 
 
+# 比较类 condition：和'<清单条目名称>'不一致 / 一致——两侧都有值时由脚本判定（忽略空白和括号全半角），不交给模型
+NOTICE_CMP = re.compile(r"^和\s*['‘’“”「」]?(.+?)['‘’“”「」]?\s*(不一致|一致)$")
+
+
 def notice_candidates(rid):
-    """清单里带 notice 的条目与本次明细行：[(清单条目, 明细行)]。"""
+    """清单里带 notice 的条目与本次明细行：[(清单条目, 明细行, {条目名称: 明细行})]。"""
     fp = os.path.join("work", rid, "input-extract-detail.json")
     if not os.path.isfile(fp):
         return []
+    items = dt.load_items()
     by = {x["id"]: x for x in ct.load(fp).get("items", [])}
-    return [(it, by[it["id"]]) for it in dt.load_items() if it.get("notice") and it["id"] in by]
+    by_name = {it["name"]: by[it["id"]] for it in items if it["id"] in by}
+    return [(it, by[it["id"]], by_name) for it in items if it.get("notice") and it["id"] in by]
 
 
-def notice_literal(it, row):
-    """值与 condition 字面相同（忽略大小写、首尾空白）的条件：仅作预判，没有草稿或草稿没给 notice 时用。"""
-    if not (row.get("source") or "").startswith("Y｜") or row.get("value") is None:
+def has_value(row):
+    return bool(row) and (row.get("source") or "").startswith("Y｜") and row.get("value") is not None
+
+
+def notice_compare(cond, row, by_name):
+    """比较类 condition 的脚本判定：True/False；不是比较类、对方条目不存在或任一侧没有值时 None（交给模型）。"""
+    m = NOTICE_CMP.match(cond.strip())
+    if not m or m.group(1) not in by_name:
+        return None
+    other = by_name[m.group(1)]
+    if not (has_value(row) and has_value(other)):
+        return None
+    same = dt.nfkc_name(str(row["value"])) == dt.nfkc_name(str(other["value"]))
+    return same if m.group(2) == "一致" else not same
+
+
+def notice_literal(it, row, by_name):
+    """值与 condition 字面相同（忽略大小写、首尾空白）的条件，或脚本判定成立的比较类条件：仅作预判，没有草稿或草稿没给 notice 时用。"""
+    if not has_value(row):
         return []
     v = str(row["value"]).strip().lower()
-    return [n["condition"].strip() for n in it["notice"] if n["condition"].strip().lower() == v]
+    return [n["condition"].strip() for n in it["notice"]
+            if n["condition"].strip().lower() == v or notice_compare(n["condition"], row, by_name)]
 
 
 def pick_notices(rid, picks, covered):
     """校验模型选的 notice（picks=None 时用字面预判），返回 (要进“注意”的话, 丢弃说明)。不合格只丢弃、不退回。"""
-    cands = {it["id"]: (it, row) for it, row in notice_candidates(rid)}
+    cands = {it["id"]: (it, row, by_name) for it, row, by_name in notice_candidates(rid)}
     if not cands:
         return [], []
     dropped = []
     if picks is None:
-        picks = [{"id": i, "condition": c} for i, (it, row) in cands.items() for c in notice_literal(it, row)]
+        picks = [{"id": i, "condition": c} for i, (it, row, by_name) in cands.items() for c in notice_literal(it, row, by_name)]
     elif not isinstance(picks, list):
         return [], ["notice 不是数组，已忽略"]
+    else:                                # 比较类条件以脚本判定为准：成立的补上，不成立的去掉
+        decided = {(i, n["condition"].strip()): notice_compare(n["condition"], row, by_name)
+                   for i, (it, row, by_name) in cands.items() for n in it["notice"]}
+        for p in picks:
+            if isinstance(p, dict) and decided.get((str(p.get("id", "")).strip(), str(p.get("condition", "")).strip())) is False:
+                dropped.append("%s「%s」脚本比对两侧一致/不一致结论相反，已去掉" % (p["id"], p["condition"]))
+        picks = [p for p in picks if not (isinstance(p, dict) and decided.get(
+            (str(p.get("id", "")).strip(), str(p.get("condition", "")).strip())) is False)]
+        picks += [{"id": i, "condition": c} for (i, c), ok in decided.items() if ok]
     seen_text = NOTICE_PUNCT.sub("", " ".join(covered))
     out, seen = [], set()
     for k, p in enumerate(picks, 1):
@@ -738,7 +770,8 @@ def pick_notices(rid, picks, covered):
         if key and key in seen_text:
             dropped.append("notice[%d] %s「%s」依据/下一步已写过，不重复" % (k, i, t))
             continue
-        out.append(t + "。")
+        if t + "。" not in out:          # 成对条目（如 B02/J06）desc 相同，只留一条
+            out.append(t + "。")
     return out, dropped
 
 
@@ -749,13 +782,14 @@ def print_notice_hint(rid):
     print("NOTICE 以下条目配置了“注意”提醒（id|名称|本次值|依据/原因｜可选条件 condition=>告知内容）。按语义判断本次哪条 condition 成立"
           "（condition 有时是值、有时是文字描述），成立的写进草稿 notice；依据或下一步已经说过同一件事的不要选，"
           "notice 只作依据/下一步的补充；analysis 也不要重复。脚本把 desc 原样放进“注意”，你不用写这句话：")
-    for it, row in cands:
+    for it, row, by_name in cands:
         src = (row.get("source") or "（待填）")
-        pre = notice_literal(it, row)
+        pre = notice_literal(it, row, by_name)
         print("  %s|%s|%s|%s｜%s%s" % (it["id"], it["name"], row.get("value"), clip(src, 80),
                                      "；".join("%s=>%s" % (n["condition"], n["desc"]) for n in it["notice"]),
                                      "（字面预判：%s）" % "、".join(pre) if pre else ""))
-    print('  草稿 notice 写法：[{"id":"条目ID","condition":"清单里的 condition 原文"}]；都不成立写 []。不写 notice 字段时脚本按字面预判。')
+    print('  草稿 notice 写法：[{"id":"条目ID","condition":"清单里的 condition 原文"}]；都不成立写 []。不写 notice 字段时脚本按字面预判。'
+          "形如“和'某条目'不一致”的比较类条件由脚本比对两侧值自动判定，不用你选。")
 
 
 def need_basis_ctx(doc):
