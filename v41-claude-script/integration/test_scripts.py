@@ -97,6 +97,7 @@ class ScriptTests(unittest.TestCase):
         want = json.loads(read("expected_input.json"))
         want["Employer"]["enterprise_name"] = want["Employer"]["employer_name"]   # v30 预设：企业名称总是传 Employer.enterprise_name；v25 的 employer_name 是模型按规则另映的，仍在
         want["AdmissionDoc"].pop("account_type_allowed")                          # v39：清单删去 D03「账户性质允许」，这个键不再有条目支撑
+        want["Employer"]["usage_scenario"] = "内部管理系统开发调试"                 # 2026-11-09 预设：用工场景必填，同机构 ID 一样取 projCont 原文
         self.assertEqual(cb["input"], want)                                       # 其余与那次真实运行的 input 逐项一致
         self.assertTrue(all(p["value"] is not None for e in cb["entities"].values() for p in e["properties"].values()))
         self.assertLess(os.path.getsize(os.path.join(self.ws, "work", RID, "input-combine.json")), 30000)
@@ -702,12 +703,12 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual(rc, 0, out)
 
     def test_v30_preset_follows_the_config_not_the_code(self):
-        """本体把企业名称改回 employer_name：只改 combine_config.json，不改代码。"""
+        """本体把企业名称改回 employer_name：只改 run_process_required.json，不改代码。"""
         cat = os.path.join(self.ws, "cat")
         shutil.copytree(os.path.dirname(SCRIPTS), cat, ignore=shutil.ignore_patterns("__pycache__", "*.zip"))
-        cfg = os.path.join(cat, "scripts", "combine_config.json")
+        cfg = os.path.join(cat, "scripts", "run_process_required.json")
         c = json.load(open(cfg, encoding="utf-8"))
-        c["fixedIdentifiers"]["A02"] = ["Employer.brand_new_name"]
+        next(r for r in c["required"] if r["item"] == "A02")["key"] = "Employer.brand_new_name"
         json.dump(c, open(cfg, "w", encoding="utf-8"), ensure_ascii=False)
 
         def runc(script, *args, stdin=""):

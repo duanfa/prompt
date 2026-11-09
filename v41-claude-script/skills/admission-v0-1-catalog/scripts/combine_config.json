@@ -1,18 +1,5 @@
 {
-  "_说明": "本体组装与校验配置。规则、属性定义每次重新获取；业务判断由模型按当次 label/comment、规则条件和材料证据提交 map/skip/set。保留用户约定的 fixedIdentifiers，以及已有一致分类证据时补齐遗漏用工场景的 generalIndustryFallback。",
-  "generalIndustryFallback": {
-    "target": "Employer.usage_scenario",
-    "sources": ["Request.industry_category", "Request.actual_business_category"],
-    "label": "一般行业"
-  },
-  "_generalIndustryFallback说明": "只补齐尚未 map/skip/set 的规则引用目标；两个来源均已通过本次定义的枚举校验、确认为一般行业且全部依据可读时，沿用证据填写用工场景。目标编码取本次 enum，没有 enum 则用 comment 的中文选项。不覆盖显式决定、不将未知或特殊类别改成一般行业；键名变更只改本配置。",
- "fixedItems": [
-  "A01",
-  "A02",
-  "A03",
-  "A04"
- ],
- "_fixedItems说明": "清单里来自请求的四个标识条目（企业ID、企业名称、需求ID、机构ID）：有值就必须映射到定义里含义对应的属性并进入 input，没有可映射的属性要在 fixedUnmapped 写明原因。属性名不在这里。",
+ "_说明": "本体组装与校验配置。规则、属性定义每次重新获取；业务判断由模型按当次 label/comment、规则条件和材料证据提交 map/skip/set。四个标识 + 用工场景的预设键与兜底值在 run_process_required.json。",
  "reasonByCode": {
   "R10": "无业务判断口径，本流程不填",
   "R11": "属性定义含义与规则用法冲突，不映射",
@@ -52,22 +39,6 @@
   "first": "⚠️ 暂无法自动给出结论：转人工研判。"
  },
  "_noConclusion说明": "没有已判定规则，或命中规则的 riskMeasure 都不在漏斗四级里时用。不给「通过」：没判定过不等于可放行。",
- "fixedIdentifiers": {
-  "A01": [
-   "Employer.employer_id"
-  ],
-  "A02": [
-   "Employer.enterprise_name"
-  ],
-  "A03": [
-   "Demand.demand_id"
-  ],
-  "A04": [
-   "LaborAgency.agency_id",
-   "Agency.agency_id"
-  ]
- },
- "_fixedIdentifiers说明": "用户预设（2026-11-05）：entpId(企业ID)→Employer.employer_id；entpName(企业名称)→Employer.enterprise_name；rqId(需求ID)→Demand.demand_id；hrInstId(机构ID)→LaborAgency.agency_id 与 Agency.agency_id（同值）。四个 ID 不可互换。build 自动传入：定义里有没有这个键都传，请求没有值就不传；模型不用映射，也不得把预设键改映到别的条目或 skip。本体改名时只改这里，不改提示词和代码；引擎若点名要别的入参键，走 output skill 的补传重试。",
  "release": {
   "next": "✅ 业务可正常开展、正常入驻。",
   "basisFallback": "已提交资料经规则校验，未命中需拦截或转人工的规则"

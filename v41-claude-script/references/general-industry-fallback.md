@@ -1,5 +1,7 @@
 # 一般行业兜底（2026-11-09，版本仍为 0.1）
 
+> **已被取代（同日）**：`Employer.usage_scenario` 改为预设，build 直接取请求 projCont 原文（见 README“用工场景预设”）。下文 build 补漏、`generalIndustryFallback` 配置与 `test_industry_fallback.py` 均已删除，仅作历史记录。
+
 依据 trace `d6ca22bf3aa15455fedd581b4a9f3536`：`ontology_agent_job_205` 的所属行业和实际业务都按软件开发判断为一般行业（置信度约95%），但组装时未给 `Employer.usage_scenario` 提交 map/skip/set。build 将遗漏记为 UNDECIDED / R10，仍提交引擎，触发用工场景为空规则。
 
 ## 行为

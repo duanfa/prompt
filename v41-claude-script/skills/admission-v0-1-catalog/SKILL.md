@@ -18,11 +18,12 @@ metadata:
 | `scripts/detail.py` | 明细脚本：`init` 预填、`fill` 合并你读材料得到的行并重算派生、`recheck` 提交二次识别结果、`compare`（只读，12 项比对）、`show`、`finish` |
 | `scripts/combine.py` | 组装脚本：`plan`（只读，列出键与条目）、`build`（按你基于当次定义提交的 map/skip/set 组装并校验，生成并校验 `input-combine.json`，打印 `CHECK`，映射落盘 `work/<id>/key-map.json`）、`validate`；只读摘要 `rules`、`props`；`result`（从引擎原始返回过滤出命中规则，写 `work/<id>/hit-rules.json`，打印计数、漏斗结论和 `NEED_BASIS`）；`summary`（只读 hit-rules.json，校验依据/下一步草稿，渲染 summary，打印最终结果 `FINAL`）。**业务属性映射和判断由模型决定；脚本不设默认业务属性表或派生公式** |
 | `scripts/combine_tool.py`、`scripts/combine_config.json` | 上面两个脚本用的库和配置 |
+| `scripts/run_process_required.json` | 调 mcp_run_process 必带的预设键（四个标识 + 用工场景，无兜底）与枚举键兜底值，build 读取，你不用读 |
 | `extract-items-checked.json` | **清单（唯一数据源）**：人工核对过的全部条目（id/group/name/desc，条数以文件为准）。改清单只改它；脚本按条目名称归组，在补充材料里插入/调整条目不必改脚本 |
 
 脚本都由 RunSkillScript 运行（只用标准库）。`RunSkillScript` 报路径不存在 / 没有这个工具时按主提示词第六节“技能配置异常”处理，不得改为手写明细。
 
-**一般行业补漏例外**：业务分类仍由模型按本次定义判断；所属行业和实际业务均已有一般行业取值及可读依据、却遗漏用工场景时，build 按 `generalIndustryFallback` 配置沿用这些证据补齐目标，打印 `GENERAL_INDUSTRY_FALLBACK`。显式 map/skip/set、特殊类别、未知、冲突及无定义/未被规则引用的目标均不补；具体分类口径见 facts skill“一般行业兜底”。
+**用工场景预设**：`Employer.usage_scenario` 必填，和机构 ID 一样由 build 从请求 `projCont`（A08 项目内容）原文自动传入（`run_process_required.json`），不做枚举转码，你不映射、不分类、不 set；提交了也只打印 `PRESET_OVERRIDE_IGNORED` 并忽略。请求没有 projCont 时不传。
 
 ## 二、明细条目格式（文件由 `detail.py` 写，路径 `work/<requestId>/input-extract-detail.json`）
 

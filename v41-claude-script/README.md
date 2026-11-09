@@ -1,4 +1,37 @@
-## 当前修订：移除调试摘要（2026-11-09，版本仍为 0.1）
+## 当前修订：run_process 必填键单独成文件、枚举键兜底（2026-11-09，版本仍为 0.1）
+
+- 新增 `skills/admission-v0-1-catalog/scripts/run_process_required.json`：
+  - `required`：调 `mcp_run_process` 必带的 6 个预设键（`Employer.employer_id`、`Employer.enterprise_name`、`Demand.demand_id`、`LaborAgency.agency_id`、`Agency.agency_id`、`Employer.usage_scenario`），每项写 `key`、取值条目 `item`、`soft`、`why`。**不设兜底**：请求没值就不传，只在 `notes.toolIssues` 记“必填键 X … 无值，未传给 mcp_run_process”，build 照常通过。取代 `combine_config.json` 的 `fixedItems` / `fixedIdentifiers` / `softPresets`（已删除；新文件缺失时 `combine_tool.py` 仍读旧字段）。本体改名只改这个文件。
+  - `enumFallbacks`（当前为空）：规则引用的枚举键没取到值时的兜底，每项 `key`、`fallback`、`why`。只对本次规则引用、定义里有选项、且模型没给出值的键生效；兜底值过 `enum_check`（中文选项换成 enum 编码，不是选项就不传并记 toolIssues）；传入后移出 unfilled，`value_source` 记 `兜底｜run_process_required.json｜…`，打印 `FALLBACK_FILLED`，只记 `notes.toolIssues`，不进摘要。`required` 里的键写在这里无效。
+- facts skill 的“一般行业兜底”（模型按证据判断所属行业等分类键）不受影响，未改。
+- 主提示词红线 2 删去键名映射清单和必填原因（移入配置的 `why`），保留“只放有证据的值、不映射/不改映/不 skip、不得为让规则运行而填值”；discover“标识”、catalog 说明同步。
+- 测试：新增 `integration/test_run_process_required.py`（6 项：必填键有值照传、无值不传只记 notes、必填键不吃枚举兜底、枚举兜底按 enum 转码并移出 unfilled、兜底不是选项不传、模型已给值不覆盖）；`test_v30_preset_follows_the_config_not_the_code` 改为修改新文件。全量通过（以暂存区的 `extract-items-checked.json` 运行；工作区里新加的 G12 尚无夹具，会让依赖 fill 的用例失败，与本次无关）。
+- catalog / discover `SKILL.md.zip` 重打包（catalog 内的清单仍是不含 G12 的旧版）；`runtime_manifest.json` 重算。
+
+---
+
+## 历史修订：用工场景预设 + 工具报错收敛（2026-11-09，版本仍为 0.1）
+
+依据 trace `e974ced3873959f85da0eeec26b2d462`（`ontology_agent_job_205_df_9_1`）的 3 类 `exit code: 1`：
+
+| 报错 | 性质 | 改动 |
+|---|---|---|
+| `规则返回不是成功码：code=200 msg=None`（inst-list-rc-rules） | 脚本缺陷：只认 `code=0` | `combine.py rules_list` 认 `0`/`200`（数字或字符串）及无 code；其他码仍报错 |
+| `set.AdmissionDoc.business_license_expiry_date 应为 [值, "派生:ID,ID｜依据"]` | 模型格式错误，校验正确 | facts skill 第 4 条加格式要求与正例；单个条目的原文/日期直接 map，不用 set |
+| `next[5] 的 ruleId 不是本次命中的结论级别或其余级别的规则` | 模型把“已满足/已通过”写进下一步，校验正确 | output skill 3.2 第 3 条：`next` 只写要对方做的事，已满足/未命中规则不写、不放进 ruleIds |
+
+**用工场景预设（用户约定）**：`Employer.usage_scenario` 必填，和机构 ID 一样由 build 从请求 `projCont`（A08 项目内容）原文自动传入，不做枚举转码；定义里有没有都传，请求没值不传。
+
+- `combine_config.json`：`fixedIdentifiers` 增加 `A08 → Employer.usage_scenario`，`fixedItems` 增加 A08；新增 `softPresets: ["A08"]`——模型对它提交的 map/skip/set 不退回，只打印 `PRESET_OVERRIDE_IGNORED` 并忽略（四个 ID 改映/skip 仍退回）。
+- **取代上一节“一般行业兜底”对用工场景的处理**：删除 `generalIndustryFallback` 配置与 `general_industry_fallback()`；所属行业、实际业务类别等其他分类键的“一般行业”判断口径不变。
+- 主提示词红线 2/10、discover“标识”表、facts 第 1 条与一般行业兜底、catalog 说明同步。
+- 测试：删除 `test_industry_fallback.py`（11 项），新增 `test_usage_scenario_preset.py`（6 项：原文照传、有 enum 不丢、map/skip/set 被忽略不退回、定义缺失仍传、projCont 为空不编造、规则返回 code=200/0 通过而 500 仍拒）；`test_scripts` 全流程期望 input 增加 `usage_scenario`。全量 **124 项通过**。
+- catalog / discover / facts / output 四个 `SKILL.md.zip` 重打包并与源码逐文件核对一致；`runtime_manifest.json` 重算（runtime 43 930 → 44 288，script 168 529 → 166 717）。
+- **需留意**：用工场景传的是项目内容原文，RULE-GATE-003（`IS EMPTY`）只在 projCont 为空时命中；RULE-IND-006/007 这类按编码比较（`= sensitive`、`= av_production`）的规则不会命中（见下文 v39 第 3 条）。本次未部署、未重跑线上任务。
+
+---
+
+## 历史修订：移除调试摘要（2026-11-09，版本仍为 0.1）
 
 - 最终结构化输出仅保留 `input`、`notes`、`summary`；schema、主提示词和 output / catalog skill 同步。
 - `combine.py summary` 仅打印 `SUMMARY` 与 `FINAL`，`summary-final.json` 仅含 `summary`，不再生成调试摘要及说明段。结论、依据、下一步、有事项时的注意段保持现有逻辑；规则计数和处置级别仍保存在命中规则明细和运行日志中。
@@ -8,7 +41,7 @@
 
 ---
 
-## 当前修订：一般行业兜底（2026-11-09，版本仍为 0.1）
+## 历史修订：一般行业兜底（2026-11-09，版本仍为 0.1；用工场景部分已被上方“用工场景预设”取代）
 
 依据 trace `d6ca22bf3aa15455fedd581b4a9f3536`（205 号）：所属行业和实际业务均已按软件开发判断为一般行业，但用工场景漏映射，触发空值拦截。
 

@@ -5,7 +5,7 @@
 「清单条目 → 本体属性」的对应由你按含义决定（v29：没有对照表，属性名随本体随时会变，脚本里不写任何属性名）；脚本只做机械校验。
 combine 文件完全由脚本生成，模型不再手写 93 KB 的 JSON，也不会漏抄、改写规则。
 
-  plan     --rid <id> --rules <规则文件> --props <属性文件>   只读：规则引用的键（含 label/comment）+ 四个标识 + 全部清单条目，供你按语义决定映射
+  plan     --rid <id> --rules <规则文件> --props <属性文件>   只读：规则引用的键（含 label/comment）+ 预设条目（四个标识、用工场景）+ 全部清单条目，供你按语义决定映射
   names    --rules <规则文件>                               打印规则引用的对象名
   rules    --rules <规则文件> [--grep 词]                     规则摘要：ruleId|label|引用键；--grep 按 condition/label/comment 过滤并给出完整 condition
   props    --props <属性文件> [--obj 对象]                    属性定义摘要：对象(label)：属性(label)…；--obj 给出该对象每个属性的 comment
@@ -38,12 +38,15 @@ def die(msg, code=1):
     sys.exit(code)
 
 
+RULE_OK_CODES = ("0", "200", "None")   # 规则接口两种成功约定都认：code=0 与 HTTP 风格 code=200（trace e974ced3 的 inst-list-rc-rules 返回 200 被误拒）；None = 没有 code 字段
+
+
 def rules_list(paths):
     """v41：--rules 可给多个文件（mcp_list_rule 落盘 + inst-rc-rule-mcp 落盘），合并成一个列表；机构规则转成 INST-<名称>。"""
     paths = paths if isinstance(paths, (list, tuple)) else [paths]
     for path in paths:
         data = ct.load(path)
-        if isinstance(data, dict) and data.get("code") not in (0, None):
+        if isinstance(data, dict) and str(data.get("code")).strip() not in RULE_OK_CODES:
             die("规则返回不是成功码：code=%s msg=%s（%s）" % (data.get("code"), data.get("msg"), path))
     rows = ct.load_rules(paths)
     if not rows:
@@ -1090,59 +1093,6 @@ def enum_check(key, pd, value, rules):
     return value, "取值「%s」不在 comment 列出的选项里，不传；可选：%s" % (short(v, 30), enum_text(opts))
 
 
-def general_industry_fallback(ents, defs, ref, rows, entries, skipmap, sets, rules):
-    """只补遗漏：沿用本轮两个一致的一般行业分类及其证据，不重新判断业务。"""
-    cfg = ct.CONFIG.get("generalIndustryFallback") or {}
-    target, sources, label = cfg.get("target"), cfg.get("sources"), cfg.get("label")
-    if not target or not sources or not label or target not in ref:
-        return []
-    if target in entries or target in skipmap or target in sets:
-        return []
-
-    def definition(key):
-        obj, prop = key.split(".")
-        return next((pd for pd in defs.get(obj, {}).get("properties", []) if pd["name"] == prop), None)
-
-    def general_value(pd):
-        src, opts = enum_options(pd)
-        for code, text in opts:
-            if text == label or code == label:
-                return code if src == "enum" else text
-        return None
-
-    pd = definition(target)
-    value = general_value(pd)
-    if value is None:
-        return []
-    value, bad = type_fix(target, pd, value, rules)
-    if bad:
-        return []
-    value, bad = enum_check(target, pd, value, rules)
-    if bad:
-        return []
-    ids = []
-    for key in sources:
-        obj, prop = key.split(".")
-        data = ents.get(obj, {}).get("props", {}).get(prop)
-        expected = general_value(definition(key))
-        if data is None or expected is None or data["value"] != expected or not data["extractIds"]:
-            return []
-        for item in data["extractIds"]:
-            row = rows.get(item)
-            if not row or not row["source"].startswith("Y｜") or row["value"] is None:
-                return []
-            if item not in ids:
-                ids.append(item)
-    obj, prop = target.split(".")
-    e = ents.setdefault(obj, {"label": defs[obj].get("label"), "comment": defs[obj].get("comment"), "props": {}})
-    e["props"][prop] = {
-        "value": value,
-        "value_source": "派生:%s｜一般行业兜底：%s 均已按本次定义确认为%s，沿用其业务证据" % (",".join(ids), "、".join(sources), label),
-        "label": pd["label"], "comment": pd.get("comment"), "extractIds": ids, "rules": ref[target],
-    }
-    return [target]
-
-
 def key_uses(key, rules):
     """规则条件里该键每次出现的（前文, 后文）片段。"""
     pat = re.compile(r"(?<![\w.])" + re.escape(key) + r"(?!\w)")
@@ -1195,9 +1145,10 @@ def type_fix(key, pd, value, rules):
     return value, None
 
 
-FIX_ITEMS = ct.FIXED_ITEMS            # 请求里的四个标识条目 A01–A04（清单条目 ID，稳定；属性名随本体变，不写死）
+FIX_ITEMS = ct.FIXED_ITEMS            # 请求里的预设条目 A01–A04 + A08 项目内容（清单条目 ID，稳定；属性名随本体变，不写死）
 MAP_FILE = "key-map.json"
 PRESET_UNDEFINED = []                 # 本次属性定义里没有、仍按预设照传的标识键（只打印，不进 notes）
+FALLBACK_FILLED = []                  # 本次按 run_process_required.json 兜底传入的枚举键 (键, 值)
 
 
 def row_code(row):
@@ -1328,7 +1279,7 @@ def cmd_plan(a):
     print('   "skip":{"R14":[键…],"R13":[键…],"R10":[键…],"R11":[键…]},   // 不填的键：R14 结果类（结论/处置/是否放行/汇总信号）、R13 外部来源（三方核查/结算/个人/流水）、R10 无业务判断口径、R11 定义含义与规则用法冲突')
     print('   "fixedUnmapped":{"A02":"原因"},   // 四个标识条目没有可映射的属性时才写')
     print('   "toolIssues":["…"]}                // R11 冲突等需要记入 notes.toolIssues 的说明')
-    print("规则：只映射「规则引用的键」（四个标识已预设，不用管）；条目没有证据（值为 N）也可映射，会自动按该条目的 N 原因码登记；不确定就 skip，不猜。")
+    print("规则：只映射「规则引用的键」（四个标识和用工场景已预设，不用管）；条目没有证据（值为 N）也可映射，会自动按该条目的 N 原因码登记；不确定就 skip，不猜。")
     print("-- 规则引用的键（对象.属性｜label｜comment｜引用规则数｜示例条件）--")
     undefined, enum_keys = [], []
     for o, ps in rk.items():
@@ -1360,7 +1311,7 @@ def cmd_plan(a):
         undefined = [k for k in undefined if k not in inst]
     if undefined:
         print("-- 规则引用但本次定义没有（自动记 notFoundInDefinition，不用处理）：%s" % "、".join(undefined))
-    print("-- 四个标识条目：已预设，不用你映射，build 自动传入；四个 ID 不可互换，预设键不能改映或 skip（预设在 combine_config.json 的 fixedIdentifiers）--")
+    print("-- 预设条目（四个标识 + 用工场景取项目内容）：不用你映射，build 自动传入；四个 ID 不可互换，预设键不能改映、skip 或 set（预设在 run_process_required.json）--")
     by = {x["id"]: x for x in doc["items"]}
     for i in FIX_ITEMS:
         keys = [k for k, it in ct.PRESET_IDS.items() if it == i]
@@ -1412,7 +1363,15 @@ def build(rid, rules, props, sets, spec_in):
                 die("map.%s 引用了清单里没有的条目 %s" % (k, i))
     skipmap = {k: c for c, ks in mp["skip"].items() for k in ks}
     entries = {k: norm_entry(k, v) for k, v in mp["map"].items()}
-    for k, item in ct.PRESET_IDS.items():     # 四个标识的预设：自动传入，不可改映、不可 skip（四个 ID 不可互换）
+    for k, item in ct.PRESET_IDS.items():     # 预设（四个标识 + 用工场景）：自动传入，不可改映、不可 skip（四个 ID 不可互换）
+        if item in ct.SOFT_PRESETS:           # 用工场景：值固定取请求原文，模型的 map/skip/set 一律不采用，只提示、不退回（免得多跑一轮）
+            touched = [w for w, hit in (("skip", k in skipmap), ("map", k in entries and entries[k][0] != [item]), ("set", k in sets)) if hit]
+            skipmap.pop(k, None)
+            sets.pop(k, None)
+            if touched:
+                print("PRESET_OVERRIDE_IGNORED %s 是预设键，固定取 %s 原文，忽略你提交的 %s；以后不用提交它" % (k, item, "/".join(touched)))
+            entries[k] = ([item], True)
+            continue
         if k in skipmap:
             die("%s 是预设的标识键（%s → %s），不能 skip" % (k, item, k))
         if k in entries and entries[k][0] != [item]:
@@ -1511,16 +1470,6 @@ def build(rid, rules, props, sets, spec_in):
         e = ents.setdefault(o, {"label": defs[o].get("label"), "comment": defs[o].get("comment"), "props": {}})
         e["props"][p] = {"value": value, "value_source": vsrc, "label": pd["label"], "comment": pd.get("comment"),
                          "extractIds": ids, "rules": ref.get(k, [])}
-    for k in general_industry_fallback(ents, defs, ref, rows, entries, skipmap, sets, rules):
-        o, p = k.split(".")
-        unfilled[o]["R10"].remove(p)
-        if not unfilled[o]["R10"]:
-            del unfilled[o]["R10"]
-        if not unfilled[o]:
-            del unfilled[o]
-        undecided = [(key, label) for key, label in undecided if key != k]
-        notes_unfilled = [item for item in notes_unfilled if item[0] != k]
-        print("GENERAL_INDUSTRY_FALLBACK %s｜所属行业和实际业务均已确认为一般行业，沿用证据补齐用工场景" % k)
     for k in list(mp["map"]) + [k for ks in mp["skip"].values() for k in ks]:
         if k not in order_keys:
             ignored.append(k)            # 既不是规则引用的键、也不是标识：不进 input
@@ -1529,6 +1478,36 @@ def build(rid, rules, props, sets, spec_in):
         if rows[i]["source"].startswith("Y｜") and i not in covered and i in fixed_unmapped:
             tool_issues.append("固定标识 %s（%s）未映射到任何属性：%s" % (i, rows[i]["name"], fixed_unmapped[i]))
     fixed_unmapped = {i: w for i, w in fixed_unmapped.items() if i not in covered}
+
+    # 必填预设键（run_process_required.json 的 required）：请求条目无值时不传、不兜底，只记 notes.toolIssues
+    del FALLBACK_FILLED[:]
+    for k, item in ct.PRESET_IDS.items():
+        o, p = k.split(".")
+        if p not in ents.get(o, {}).get("props", {}):
+            tool_issues.append("必填键 %s 的条目 %s（%s）无值，未传给 mcp_run_process" % (k, item, rows[item]["name"]))
+    # 枚举键兜底（enumFallbacks）：本次规则引用、定义里有选项、却没取到值的键，传配置的选项；不是选项就不传
+    for k, fb in ct.ENUM_FALLBACKS.items():
+        o, p = k.split(".")
+        pd = next((x for x in defs.get(o, {}).get("properties", []) if x["name"] == p), None)
+        if k not in refset or pd is None or not enum_options(pd)[0] or p in ents.get(o, {}).get("props", {}):
+            continue
+        value, bad = enum_check(k, pd, fb, rules)
+        if bad:
+            tool_issues.append("枚举键 %s 的兜底值不可用（%s），未传" % (k, bad))
+            continue
+        for code, ps in list(unfilled.get(o, {}).items()):
+            if p in ps:
+                ps.remove(p)
+                if not ps:
+                    del unfilled[o][code]
+        if o in unfilled and not unfilled[o]:
+            del unfilled[o]
+        notes_unfilled[:] = [x for x in notes_unfilled if x[0] != k]
+        e = ents.setdefault(o, {"label": defs[o].get("label"), "comment": defs[o].get("comment"), "props": {}})
+        e["props"][p] = {"value": value, "value_source": "兜底｜%s｜本次未取到值" % ct.REQUIRED_FILE, "label": pd.get("label"),
+                         "comment": pd.get("comment"), "extractIds": [], "rules": ref.get(k, [])}
+        FALLBACK_FILLED.append((k, value))
+        tool_issues.append("枚举键 %s 本次未取到值，按 %s 兜底传入 %s" % (k, ct.REQUIRED_FILE, json.dumps(value, ensure_ascii=False)))
 
     names = list(defs)
     ents_sorted = {o: ents[o] for o in names if o in ents}
@@ -1631,7 +1610,10 @@ def cmd_build(a):
         for k, lb in undecided[:60]:
             print("- %s｜%s" % (k, lb or ""))
     if PRESET_UNDEFINED:
-        print("PRESET_UNDEFINED 预设的标识键本次属性定义里没有，仍按预设传入（引擎自己的流程可能要它）：%s。若本体已把它改名，改 combine_config.json 的 fixedIdentifiers，不要改提示词。" % "、".join(PRESET_UNDEFINED))
+        print("PRESET_UNDEFINED 预设的标识键本次属性定义里没有，仍按预设传入（引擎自己的流程可能要它）：%s。若本体已把它改名，改 run_process_required.json，不要改提示词。" % "、".join(PRESET_UNDEFINED))
+    if FALLBACK_FILLED:
+        print("FALLBACK_FILLED 枚举键本次未取到值，已按 run_process_required.json 兜底传入（已记 notes.toolIssues，不用处理，不写进摘要依据）：%s" % "、".join(
+            "%s=%s" % (k, json.dumps(v, ensure_ascii=False)) for k, v in FALLBACK_FILLED))
     if enum_dropped:
         print("ENUM_DROPPED %d 个枚举属性的取值不是可选项，已按 R10 记入 unfilled、不进 input（有 enum 从 enum 选编码，没有 enum 从 comment 选一项；用 set 重交，置信度低于 50%% 就 skip R10）：" % len(enum_dropped))
         for k, why in enum_dropped[:20]:

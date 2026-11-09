@@ -21,9 +21,18 @@ from collections import OrderedDict
 KEY = re.compile(r"\b([A-Z][A-Za-z]+)\.([a-z][a-z_]*)\b")
 CONFIG = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "combine_config.json"), encoding="utf-8"))
 # v29：不再写死任何属性名（旧版的固定标识键、字符串键、_name 后缀、结果类正则、定义冲突都曾在这里，本体改名就失效）。
-# 清单条目 → 属性的对应由 Agent 按含义决定；这里只认清单里的四个标识条目 ID（A01–A04，清单侧稳定）。
-FIXED_ITEMS = CONFIG["fixedItems"]
-PRESET_IDS = {k: item for item, keys in CONFIG.get("fixedIdentifiers", {}).items() for k in keys}   # 预设：键 → 标识条目（A01–A04）
+# 清单条目 → 属性的对应由 Agent 按含义决定；这里只认清单里的预设条目 ID（A01–A04、A08，清单侧稳定）。
+REQUIRED_FILE = "run_process_required.json"
+_rp = os.path.join(os.path.dirname(os.path.abspath(__file__)), REQUIRED_FILE)
+# 调 mcp_run_process 必带的预设键（四个标识 + 用工场景）及兜底值，单独成文件；没有该文件时退回旧版 combine_config.json 的 fixedIdentifiers/softPresets
+_rq = json.load(open(_rp, encoding="utf-8")) if os.path.isfile(_rp) else {}
+REQUIRED = _rq["required"] if _rq else [
+    {"key": k, "item": item, "soft": item in CONFIG.get("softPresets", []), "why": ""}
+    for item, keys in CONFIG.get("fixedIdentifiers", {}).items() for k in keys]
+PRESET_IDS = {r["key"]: r["item"] for r in REQUIRED}   # 预设：键 → 标识条目（A01–A04、A08）
+FIXED_ITEMS = list(dict.fromkeys(r["item"] for r in REQUIRED)) or CONFIG.get("fixedItems", [])
+SOFT_PRESETS = {r["item"] for r in REQUIRED if r.get("soft")}   # 预设里“模型提交了也只忽略、不退回”的条目（用工场景 A08）；四个 ID 不在其中，改映/skip 仍退回
+ENUM_FALLBACKS = OrderedDict((r["key"], r["fallback"]) for r in _rq.get("enumFallbacks", []) if r["key"] not in PRESET_IDS)   # 枚举键没取到值时的兜底
 
 
 def jl(o):
