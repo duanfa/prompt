@@ -14,6 +14,29 @@ def mk(rule_id, name, result, rm, comment="描述｜适用阶段：准入", reas
             "comment": comment, "riskMeasure": rm, "ruleSource": src}
 
 
+def unformat(s):
+    """摘要排版（combine_config.json 的 summaryHeadings / summaryStyle）还原成原来的纯文本格式，内容断言沿用；
+    排版本身由 test_layout_* 检查。只去掉排版记号：标题序号、引用块、结论图标与加粗、列表符号（依次编号）、依据要点加粗。"""
+    out, n = [], 0
+    for l in s.split("\n"):
+        m = re.match(r"^## \d+ · (.+)$", l)
+        if m:
+            out.append("## " + m.group(1))
+            n = 0
+            continue
+        m = re.match(r"^> (?:\S+ )?\*\*(.+)\*\*$", l)
+        if m:
+            out.append(m.group(1))
+            continue
+        m = re.match(r"^(?:> )?- (.*)$", l)
+        if m:
+            n += 1
+            out.append("%d. %s" % (n, m.group(1).replace("**", "")))
+            continue
+        out.append(l)
+    return "\n".join(out)
+
+
 class T(unittest.TestCase):
     def setUp(self):
         self.ws = tempfile.mkdtemp()
@@ -45,11 +68,11 @@ class T(unittest.TestCase):
             os.remove(tries)
         return self.run_("summary", "--rid", rid, "--file", eng, stdin=json.dumps(draft, ensure_ascii=False))
 
-    def final(self, rid="r1"):
+    def final(self, rid="r1", raw=False):
         with open(os.path.join(self.ws, "work", rid, "summary-final.json"), encoding="utf-8") as f:
             result = json.load(f)
         self.assertEqual(set(result), {"summary"})
-        return result
+        return result if raw else {"summary": unformat(result["summary"])}
 
     # ───── result：漏斗 ─────
 
@@ -475,7 +498,7 @@ class T(unittest.TestCase):
         cfg = os.path.join(os.path.dirname(SCRIPT), "combine_config.json")
         c = json.load(open(cfg, encoding="utf-8"))
         self.assertEqual([x["level"] for x in c["riskLadder"]], ["拦截", "建议拦截", "转人工", "通过"])
-        self.assertEqual(c["summaryHeadings"], {"conclusion": "## 结论", "basis": "## 依据", "next": "## 下一步", "attention": "## 注意"})
+        self.assertEqual(c["summaryHeadings"], {"conclusion": "## 1 · 结论", "basis": "## 2 · 依据", "next": "## 3 · 下一步", "attention": "## 4 · 注意"})
 
 
     def test_summary_omits_internal_diagnostics_and_retains_hit_counts(self):
@@ -579,7 +602,7 @@ class T(unittest.TestCase):
         self.assertIn("「有截止日且已到期」", final["notes"]["unresolvedProperties"][0])
         self.assertNotIn("“", line)
         self.assertEqual(final, json.load(open(os.path.join(w, "final-output.json"), encoding="utf-8")))
-        self.assertEqual(final["summary"], self.final()["summary"])
+        self.assertEqual(final["summary"], self.final(raw=True)["summary"])
         with open(os.path.join(os.path.dirname(HERE), "references", "结构化输出schema_v28.json"), encoding="utf-8") as f:
             schema = json.load(f)
         self.assertEqual(set(schema["required"]), set(final))
@@ -590,7 +613,7 @@ class T(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         final = json.loads(next(l[len("FINAL "):] for l in out.splitlines() if l.startswith("FINAL ")))
         self.assertEqual(set(final), set(schema["required"]))
-        self.assertEqual(final["summary"], self.final()["summary"])
+        self.assertEqual(final["summary"], self.final(raw=True)["summary"])
         self.assertEqual(final, json.load(open(os.path.join(w, "final-output.json"), encoding="utf-8")))
 
     def test_v37_attention_drops_repeats_of_registry_checks_and_bracket_only_diffs(self):
@@ -612,6 +635,35 @@ class T(unittest.TestCase):
         self.assertNotIn("注册资本：执照原文", text)
         self.assertNotIn("待比对", text)
         self.assertNotIn("括号形式", text)
+
+
+    # ───── 排版：只改格式，文字与原来逐字相同 ─────
+
+    def test_layout_only_changes_format_not_text(self):
+        eng = self.image_ws()
+        basis = [{"ruleIds": ["RULE-BIZ-001"], "text": "影视灵工场景：「按照场务指示」，平台认可但需持续关注任务是否真实发生"}]
+        nxt = ["在项目内容里补写每次任务的具体地点、时间和交付物", "上传剧组现场任务照片作为交付佐证"]
+        rc, out = self.summary(eng, basis, nxt, analysis=["建议核实拍摄地是否为申报企业的实际办公地"])
+        self.assertEqual(rc, 0, out)
+        s = self.final(raw=True)["summary"]
+        self.assertTrue(s.startswith("## 1 · 结论\n> 🟡 **转人工｜需转人工核验后决定是否入驻**\n\n## 2 · 依据\n"), s)
+        self.assertIn("## 2 · 依据\n- **影视灵工场景：**「按照场务指示」，平台认可但需持续关注任务是否真实发生\n\n", s)
+        self.assertIn("## 3 · 下一步\n> - %s\n> - %s" % tuple(nxt), s)
+        self.assertIn("\n\n## 4 · 注意\n- ", s)
+        self.assertIn("- agent全局分析（仅供参考）：建议核实拍摄地是否为申报企业的实际办公地。", s)
+        # 去掉排版记号后与原来的纯文本格式完全一致
+        u = unformat(s)
+        self.assertIn("## 结论\n转人工｜需转人工核验后决定是否入驻\n\n## 依据\n1. 影视灵工场景：「按照场务指示」", u)
+        self.assertIn("## 下一步\n1. %s\n2. %s" % tuple(nxt), u)
+
+    def test_layout_no_conclusion_icon_and_plain_basis(self):
+        eng = self.put("e.json", [mk("R-1", "x", "skip", "拦截")])
+        rc, out = self.run_("summary", "--rid", "r1", "--file", eng)
+        self.assertEqual(rc, 0, out)
+        s = self.final(raw=True)["summary"]
+        self.assertIn("## 1 · 结论\n> ⚪ **暂无结论｜提交的信息还不足以完成自动核验**", s)
+        self.assertIn("## 2 · 依据\n- 提交的信息还不足以完成自动核验", s)      # 没有「要点：」的依据不加粗
+        self.assertNotIn("## 4 · 注意", s)
 
 
 if __name__ == "__main__":

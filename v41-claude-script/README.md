@@ -1,4 +1,35 @@
-## 当前修订：派生改为清单声明的通用工具 + 回归夹具按需补齐（2026-11-09，版本仍为 0.1）
+## 当前修订：summary 排版（2026-11-09，版本仍为 0.1）
+
+需求（用户）：summary 的样式参照《风控信息报告-结构化版.html》，**只改排版格式，文字内容不改**。
+
+- `combine.py summary` 渲染：标题带序号（`## 1 · 结论` / `## 2 · 依据` / `## 3 · 下一步` / `## 4 · 注意`）；结论行放进引用块并加粗，前加级别图标（⛔ 拦截、🔴 建议拦截、🟡 转人工、🟢 通过、⚪ 暂无结论）；依据、注意改为无序列表，依据写成「要点：说明」时要点加粗；下一步为引用块里的无序列表。结论行、依据、下一步、注意的文字与原来逐字相同，段落、条目、顺序不变。
+- `combine_config.json`：`summaryHeadings` 改为带序号的标题；新增 `summaryStyle.levelIcons`。
+- output skill 第三节、回归验收清单同步排版说明。
+- 测试：`test_summary` 用 `unformat()` 把排版还原成原纯文本格式，原有内容断言不变；新增 2 项排版用例（格式与“去掉记号后与原文本一致”、暂无结论图标与无要点依据不加粗）。test_summary 37 项通过；test_scripts 仍是原有的 2 项失败（B24、21≠18），与本次无关。
+- catalog `Archive.zip`、output `SKILL.md.zip` 重打包；`runtime_manifest.json` 重算（runtime 45 951 → 46 120，script 173 572 → 174 466）。
+- **需留意**：配置原说明写着“前端按标题切分”，标题字样从 `## 结论` 变为 `## 1 · 结论`，前端若按旧标题切分需同步；不想改前端可把 `summaryHeadings` 改回旧值，其余排版不受影响。
+
+---
+
+## 当前修订：名称传给引擎前统一口径、章的内容填企业名称（2026-11-09，版本仍为 0.1）
+
+依据 trace `416155b0…`、`ac09911b…`：①`tax_clearance_taxpayer_name`、`tax_payment_taxpayer_name`、`social_insurance_unit_name` 传了 `true`——模型把它们 map 到「…与企业名称是否一致」条目（H29/H23/H17），而不是名称原文条目（H29-1/H23-1/H17-1）；②`lease_contract_party_b_name` 传「上海修匀软件合同专用章」；③`settlement_account_name`「…(个人独资)」与 `enterprise_name`「…（个人独资）」括号全半角不同。规则 `X != Employer.enterprise_name` 由引擎逐字比较，②③都会误命中。
+
+| 改动 | 说明 |
+|---|---|
+| 文字统一（脚本） | `combine_tool.norm_text`：NFKC（全角括号/字母/数字/冒号分号等 → 半角）+ 中文标点表（【】〔〕《》“”‘’「」。、—…→ 英文）+ 去零宽字符 + 去首尾和中间空白，只保留两个英文字母/数字之间的一个空格（"ABC Technology"、"2025-12-31 00:00:00"）。`combine build` 组装 input 时对**所有**字符串取值做这一遍（含企业名称等标识键），两侧口径一致 |
+| 为什么不在 `input-extract-detail.json` 落盘时做 | 试过：工商预填与派生行的文字脚本还要按原样解析（J08 按「；」切、J10 找「截止 」、J34 以「不一致：」开头），统一后 4 项回归失败；明细也是摘要引文的核对来源。所以明细保持原文，统一放在出口（build）；`validate` 与摘要引文校验都认统一后的写法 |
+| 章的内容（提示词） | materials skill 新增「章的内容」：印文去掉合同专用章/财务专用章/业务专用章/发票专用章/公章/专用章等字样后主体名称与执照名称 B01 一致（只差空格、括号全半角也算）→ **value 填企业名称 A02 原文**，证据写印文原文；主体名称不同（简称、缺字、别家公司）→ 照抄印文。清单 G11 desc 同步 |
+| 名称键不收布尔 | 提示词：facts skill 第 6 条写明名称键只 map 名称原文条目，不 map「…是否一致/是否匹配」条目。脚本兜底：`type_fix` 对规则里与另一属性 `=`/`!=` 比较、label 含“名”的键，收到布尔不传，打印 `TYPE_DROPPED` |
+
+- 撤回上一稿的“名称对齐”（按规则对方原文改值）及 `combine_config.json nameAlign`，由上面三项取代。
+- 测试：`integration/test_name_align.py` 7 项（标点/空格统一、英文词间空格保留、非字符串不动、input 统一而明细保持原文、括号全半角两侧一致、主体不同照传、布尔不当名称传）。全量 142 项，140 通过；`test_v39_new_items_are_derived`（找不到 B24）、`test_v35_supplement_groups_follow_names_not_h_numbers`（期望 18 得 21）**改动前就失败**，是清单增删条目后测试未同步。
+- facts / materials `SKILL.md.zip`、catalog `Archive.zip` 重打包（不含 `__MACOSX`、`__pycache__`）；`runtime_manifest.json` 重算（runtime 45 951 → 46 120，script 173 572 → 174 466）。
+- **需留意**：①传给引擎的中文标点也被改成英文（如经营范围「；」→「;」、「、」→「,」），规则里若写死中文标点做 CONTAINS 比较会对不上（目前未见）；②“是不是该企业的章”由模型判断，只靠提示词；③未在真实 WanScope 运行。
+
+---
+
+## 历史修订：派生改为清单声明的通用工具 + 回归夹具按需补齐（2026-11-09，版本仍为 0.1）
 
 起因：清单加了 G12（承租方的章是否与企业名称一致）后 59 项回归失败——58 项是 G12 没有夹具答案、整张清单门禁卡住后续所有步骤，1 项是测试写死了 163 条。
 
@@ -21,7 +52,7 @@
 - facts skill 的“一般行业兜底”（模型按证据判断所属行业等分类键）不受影响，未改。
 - 主提示词红线 2 删去键名映射清单和必填原因（移入配置的 `why`），保留“只放有证据的值、不映射/不改映/不 skip、不得为让规则运行而填值”；discover“标识”、catalog 说明同步。
 - 测试：新增 `integration/test_run_process_required.py`（6 项：必填键有值照传、无值不传只记 notes、必填键不吃枚举兜底、枚举兜底按 enum 转码并移出 unfilled、兜底不是选项不传、模型已给值不覆盖）；`test_v30_preset_follows_the_config_not_the_code` 改为修改新文件。全量通过（以暂存区的 `extract-items-checked.json` 运行；工作区里新加的 G12 尚无夹具，会让依赖 fill 的用例失败，与本次无关）。
-- catalog / discover `SKILL.md.zip` 重打包（catalog 内的清单仍是不含 G12 的旧版）；`runtime_manifest.json` 重算。
+- catalog / discover `SKILL.md.zip` 重打包（catalog 内的清单仍是不含 G12 的旧版）；`runtime_manifest.json` 重算（runtime 45 951 → 46 120，script 173 572 → 174 466）。
 
 ---
 

@@ -428,7 +428,8 @@ def quote_ok(q, hay):
     if hay is None:
         return True
     parts = [p.strip() for p in re.split(r"…+|\.{3,}", q) if len(p.strip()) >= 2]
-    return bool(parts) and all(p in hay for p in parts)
+    nh = ct.norm_text(hay)               # 传给引擎的值已统一标点/空格，引用统一后的写法也算原文
+    return bool(parts) and all(p in hay or ct.norm_text(p) in nh for p in parts)
 
 
 def jstr(x):
@@ -883,6 +884,12 @@ def check_analysis(items, hay, ids, rid=None):
     return ok, dropped
 
 
+def bold_head(t):
+    """依据写成「要点：说明」时把要点加粗（要点 2–18 字、不含引文和标点），文字不动；没有要点的原样。"""
+    m = re.match(r"^([^：:「」，,。；]{2,18})([：:])(.+)$", t)
+    return "**%s%s**%s" % (m.group(1), m.group(2), m.group(3)) if m else t
+
+
 def cmd_summary(a):
     """按漏斗级别渲染 summary（结论 / 依据 / 下一步，有事项时加注意段）。
     结论由脚本按引擎结果生成；依据和下一步由你写、脚本校验：
@@ -1029,8 +1036,17 @@ def cmd_summary(a):
             for e in lenient_log:
                 print("LENIENT 已丢弃/已补齐：" + e)
 
-    def block(head, items, numbered):
-        return "\n".join([head] + [("%d. " % i if numbered else "") + t for i, t in enumerate(items, 1)])
+    sty = cfg.get("summaryStyle") or {}
+
+    def block(head, items, kind):
+        """只改排版、不改文字：conclusion=引用块+图标+加粗；basis=列表，「要点：」加粗；next=引用块里的列表；其余=列表。"""
+        if kind == "conclusion":
+            icon = (sty.get("levelIcons") or {}).get(L["level"] if L else "", "")
+            return "\n".join([head] + ["> %s**%s**" % (icon + " " if icon else "", t) for t in items])
+        if kind == "basis":
+            items = [bold_head(t) for t in items]
+        prefix = "> - " if kind == "next" else "- "
+        return "\n".join([head] + [prefix + t for t in items])
 
     concl = "%s｜%s" % (L["level"], L["title"]) if L else "暂无结论｜%s" % why_plain(fn["why"])
     att = attention_lines(a.rid)
@@ -1043,9 +1059,9 @@ def cmd_summary(a):
         att.append("%s：%s。" % (cfg.get("analysisLabel", "agent全局分析（仅供参考）"), "；".join(analysis)))
     if os.path.isfile(tries_path(a.rid)):
         os.remove(tries_path(a.rid))
-    parts = [block(H["conclusion"], [concl], False), block(H["basis"], basis, True), block(H["next"], nxt, True)]
+    parts = [block(H["conclusion"], [concl], "conclusion"), block(H["basis"], basis, "basis"), block(H["next"], nxt, "next")]
     if att:
-        parts.append(block(H["attention"], att, True))
+        parts.append(block(H["attention"], att, "attention"))
     summ = "\n\n".join(parts)
     os.makedirs(os.path.join("work", a.rid), exist_ok=True)
     if lv is not None:
@@ -1189,6 +1205,18 @@ NULL_TAIL = re.compile(r"^\s+IS\s+(?:NOT\s+)?(?:NULL|EMPTY)\b", re.I)
 KEY_CMP_TAIL = re.compile(r"^\s*(?:<=|>=|<|>)\s*[A-Z][A-Za-z0-9]*\.[a-z][a-z0-9_]*")
 KEY_CMP_HEAD = re.compile(r"[A-Z][A-Za-z0-9]*\.[a-z][a-z0-9_]*\s*(?:<=|>=|<|>)\s*$")
 LONG_TERM = ("长期", "永久", "无固定期限", "不约定期限")
+EQ_KEY_TAIL = re.compile(r"^\s*(?:!=|=)\s*([A-Z][A-Za-z0-9]*\.[a-z][a-z0-9_]*)(?![\w.])")
+EQ_KEY_HEAD = re.compile(r"(?<![\w.])([A-Z][A-Za-z0-9]*\.[a-z][a-z0-9_]*)\s*(?:!=|(?<![<>!=])=)\s*$")
+
+
+def eq_peers(key, rules):
+    """规则里与该键做 = / != 比较的另一个属性键（如 X.party_b_name != Employer.enterprise_name → Employer.enterprise_name）。"""
+    out = []
+    for h, t in key_uses(key, rules):
+        for m in (EQ_KEY_TAIL.match(t), EQ_KEY_HEAD.search(h)):
+            if m and m.group(1) != key and m.group(1) not in out:
+                out.append(m.group(1))
+    return out
 
 
 def type_fix(key, pd, value, rules):
@@ -1203,6 +1231,9 @@ def type_fix(key, pd, value, rules):
     if value in ("true", "false"):
         value = value == "true"
     tails = [t for _, t in uses]
+    if isinstance(value, bool) and eq_peers(key, rules) and "名" in ((pd or {}).get("label") or ""):
+        return value, "规则拿它和另一个属性（%s）比较名称，取值「%s」是判断结果不是名称，不传（改映射到名称原文条目，不要映射到“…是否一致/是否匹配”条目）" % (
+            "、".join(eq_peers(key, rules)), value)
     if any(BOOL_TAIL.match(t) for t in tails) and all(BOOL_TAIL.match(t) or NULL_TAIL.match(t) for t in tails):
         if isinstance(value, bool):
             return value, None
@@ -1532,6 +1563,7 @@ def build(rid, rules, props, sets, spec_in):
                 continue                                        # 非规则引用的标识（如请求没给 rqId）：不传，也不进 unfilled
             value = ct.typed(k, main["value"], rules, as_str=is_fixed)
             vsrc = "%s｜%s" % (main["id"], main["source"])
+        value = ct.norm_text(value)      # 传给引擎前统一：中文/全角标点 → 英文，去空格（明细文件保持原文）
         before_fix = value
         value, bad = type_fix(k, pd, value, rules) if not is_fixed else (value, None)
         if not bad and isinstance(before_fix, str) and value != before_fix:

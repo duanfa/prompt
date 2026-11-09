@@ -15,7 +15,7 @@
         [--map key2ids.json] [--extract input-extract-detail.json] --routing requestId=..,domain=..,scene=..,businessKey=.. --out input-combine.json
   python3 combine_tool.py validate --extract input-extract-detail.json --combine input-combine.json [--rules ..] [--props ..] [--items extract-items-checked.json]
 """
-import argparse, json, os, re, sys
+import argparse, json, os, re, sys, unicodedata
 from collections import OrderedDict
 
 KEY = re.compile(r"\b([A-Z][A-Za-z]+)\.([a-z][a-z_]*)\b")
@@ -101,6 +101,29 @@ def numeric_key(key, rules):
     pat = re.compile(re.escape(key) + r"\s*(<=|>=|<|>|=|!=)\s*-?\d+(\.\d+)?(?![\w.])")
     anyuse = [r for r in rules if re.search(re.escape(key) + r"\b", r["condition"])]
     return bool(anyuse) and all(pat.search(r["condition"]) for r in anyuse)
+
+
+# 传给引擎的取值统一文字口径（2026-11-09）：引擎逐字比较名称，「（个人独资）」与「(个人独资)」、多一个空格都会判不一致。
+# combine build 组装 input 时对所有字符串取值做最后一遍：全角/中文标点 → 英文标点（NFKC + 下表），去掉首尾和中间的空白、零宽字符；
+# 只保留两个英文字母/数字之间的一个空格（如 "ABC Technology"、"2025-12-31 00:00:00"），否则英文名称、时间会粘连。
+# input-extract-detail.json 保持原文不改：工商预填、派生行（J08「；」、J10「截止 」、J34「不一致：」）脚本还要按原样解析，摘要引文也要逐字核对。
+PUNCT_MAP = str.maketrans({"【": "[", "】": "]", "〔": "(", "〕": ")", "〈": "<", "〉": ">", "《": "<", "》": ">",
+                           "“": '"', "”": '"', "‘": "'", "’": "'", "「": '"', "」": '"', "『": '"', "』": '"',
+                           "。": ".", "、": ",", "—": "-", "–": "-", "―": "-", "‐": "-", "‑": "-", "－": "-", "～": "~", "…": "..."})
+ZERO_WIDTH_RE = re.compile(r"[​-‏⁠﻿]")
+INNER_SPACE_RE = re.compile(r"\s+")
+
+
+def _keep_space(t, m):
+    a, b = m.start() - 1, m.end()
+    return a >= 0 and b < len(t) and t[a].isascii() and t[a].isalnum() and t[b].isascii() and t[b].isalnum()
+
+
+def norm_text(v):
+    if not isinstance(v, str):
+        return v
+    t = unicodedata.normalize("NFKC", ZERO_WIDTH_RE.sub("", v)).translate(PUNCT_MAP).strip()
+    return INNER_SPACE_RE.sub(lambda m: " " if _keep_space(t, m) else "", t)
 
 
 def typed(key, s, rules, as_str=False):
@@ -250,7 +273,7 @@ def cmd_validate(a):
                     errs.append("combine %s.%s: 有值但主条目 %s 在 extract 中无值" % (o, p, d["extractIds"][0]))
                 elif prim is not None:
                     pv = prim["value"]
-                    ok = str(d["value"]).lower() == pv.lower() if isinstance(d["value"], bool) else str(d["value"]) == pv
+                    ok = str(d["value"]).lower() == pv.lower() if isinstance(d["value"], bool) else str(d["value"]) in (pv, norm_text(pv))
                     if not ok and isinstance(d["value"], str) and re.fullmatch(r"\d{8}", d["value"]):     # v33：日期键统一为 yyyyMMdd
                         ok = d["value"] in ["%04d%02d%02d" % tuple(map(int, g)) for g in re.findall(r"(\d{4})\D{0,2}(\d{1,2})\D{0,2}(\d{1,2})", pv)]
                     if not ok:
