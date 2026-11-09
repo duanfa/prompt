@@ -54,9 +54,6 @@
   "summary": {
    "type": "string"
   },
-  "summary_debug": {
-   "type": "string"
-  },
   "extractionReport": {
    "type": "array",
    "description": "可选。input-extract-detail.json 的 items 原样：name=清单条目，desc=业务语义，value=取到的值（字符串，取不到为 null），source=来源（Y｜来源｜证据 或 N｜原因码｜原因）",
@@ -95,8 +92,7 @@
  "required": [
   "input",
   "notes",
-  "summary",
-  "summary_debug"
+  "summary"
  ],
  "additionalProperties": false
 }

@@ -42,10 +42,9 @@
   "conclusion": "## 结论",
   "basis": "## 依据",
   "next": "## 下一步",
-  "note": "## 说明",
   "attention": "## 注意"
  },
- "_summaryHeadings说明": "摘要四个小标题（结论/依据/下一步/说明），前端按它们切分；改这里即可，提示词里不写死标题字样。",
+ "_summaryHeadings说明": "摘要三个固定小标题（结论/依据/下一步），有事项时增加注意段，前端按它们切分；改这里即可，提示词里不写死标题字样。",
  "analysisLabel": "agent全局分析（仅供参考）",
  "_analysisLabel说明": "v38：summary 草稿可带 analysis（0–3 条），脚本把它拼成“注意”的最后一条，以这个标签开头；不合格的条目只丢弃、不退回。",
  "noConclusion": {
@@ -158,7 +157,7 @@
    "命中规则的处置级别（riskMeasure）都不在漏斗五级内": "部分核验结果无法自动归入审核结论"
   }
  },
- "_plainLanguage说明": "v39：summary 给客户看，不出现字段变量、清单编号、属性名、原因码和技术用语。jargon=依据/下一步/全局分析里（「」原文之外）不允许出现的词，suggest=报错时给的业务说法；fieldNames=请求字段名的中文说法，脚本生成的“注意”段遇到时替换；whyText=暂无结论时结论行的业务说法（技术原因只留在 summary_debug 的说明里）。",
+ "_plainLanguage说明": "v39：summary 给客户看，不出现字段变量、清单编号、属性名、原因码和技术用语。jargon=依据/下一步/全局分析里（「」原文之外）不允许出现的词，suggest=报错时给的业务说法；fieldNames=请求字段名的中文说法，脚本生成的“注意”段遇到时替换；whyText=暂无结论时结论行的业务说法（技术原因保存在命中规则明细和运行日志中）。",
  "flexJobException": {
   "sources": {
    "industry": [

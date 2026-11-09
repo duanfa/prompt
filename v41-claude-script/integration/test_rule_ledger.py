@@ -1,6 +1,5 @@
 """Offline contract tests; no service calls or credentials."""
 import copy
-import re
 import unittest
 
 from rule_ledger import LedgerError, build_ledger, finalize
@@ -28,8 +27,9 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(result["ledger"]["stats"],
                          {"total": 3, "determined": 2, "true": 1, "false": 1, "skip": 1,
                           "falseInsufficient": 0})
-        self.assertEqual(re.sub(r"【来源：[^】]+】", "", result["summary_debug"]),
-                         result["summary"])
+        self.assertEqual(set(result), {"ledger", "summary", "validation"})
+        self.assertIn("命中：条件成立。未命中：条件不成立", result["summary"])
+        self.assertNotIn("【来源：", result["summary"])
 
     def test_omission_duplicate_unknown_skip_and_direction_are_blocked(self):
         for name, alter in (
@@ -115,7 +115,8 @@ class InsufficientBasisTests(unittest.TestCase):
         out = finalize(self.response, self.draft(), **self.kw)
         self.assertIn("其中2条因所需属性未取得而未触发、未据此核实", out["summary"])
         self.assertIn("未触发（所需属性未取得，未据此核实）：资料类型缺失", out["summary"])
-        self.assertEqual(re.sub(r"【来源：[^】]+】", "", out["summary_debug"]), out["summary"])
+        self.assertEqual(set(out), {"ledger", "summary", "validation"})
+        self.assertNotIn("【来源：", out["summary"])
 
     def test_wrong_basis_is_blocked(self):
         d = self.draft()

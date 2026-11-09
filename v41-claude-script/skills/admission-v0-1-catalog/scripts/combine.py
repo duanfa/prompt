@@ -806,8 +806,8 @@ def check_analysis(items, hay, ids, rid=None):
 
 
 def cmd_summary(a):
-    """按漏斗级别渲染 summary（summary = 结论 / 依据 / 下一步 三段；summary_debug = 这三段 + 说明）。
-    结论、说明由脚本按引擎结果生成（说明只进 summary_debug）；依据和下一步由你写、脚本校验：
+    """按漏斗级别渲染 summary（结论 / 依据 / 下一步，有事项时加注意段）。
+    结论由脚本按引擎结果生成；依据和下一步由你写、脚本校验：
       拦截 / 建议拦截 / 转人工：依据围绕该级别命中规则的 comment 举证（每条命中规则至少出现一次），下一步结合提交资料写；
       通过：没有命中需处置的规则，依据写 4–6 条夸已提交资料真实合规，下一步由脚本固定；
       无结论（没有已判定规则/命中级别都不识别）：脚本直接渲染，不用写草稿。"""
@@ -824,7 +824,6 @@ def cmd_summary(a):
     release = lv is not None and lv == len(lad) - 1
     at_level = [h for h in hits if L and h["level"] == L["level"]]
     rec = [h for h in hits if h["level"] is not None]
-    unrec = [h for h in hits if h["level"] is None]
     allowed = {r["ruleId"] for r in at_level}
     other_lv = [h for h in rec if L and h["level"] != L["level"] and h["level"] != lad[-1]["level"]]    # 结论之外、需要处理的命中
     other_ids = {h["ruleId"] for h in other_lv}
@@ -952,27 +951,6 @@ def cmd_summary(a):
             for e in lenient_log:
                 print("LENIENT 已丢弃/已补齐：" + e)
 
-    # 说明：全由脚本按 hit-rules.json 的计数与命中规则生成
-    sk, sk_later, cU = c["skip"], c["skipLaterStage"], c["missAttrAbsent"]
-    sk_adm = sk - sk_later
-    notes = ["核查完成：本次共 %d 条规则，其中 %d 条给出明确结果（命中 %d 条、未命中 %d 条%s），另有 %d 条跳过%s。" % (
-        c["total"], c["judged"], c["hit"], c["missDetermined"] + cU, "，其中 %d 条因所需属性未取得而未触发、未据此核实" % cU if cU else "", sk,
-        "（其中 %d 条属后续阶段规则，到该阶段再核验）" % sk_later if sk_later else "")]
-    if c.get("outOfScope"):
-        notes.append("另有 %d 条规则只适用于签约、结算、处置或复核等后续环节，与本次客户准入无关，组装前已排除，不计入结论%s。" % (
-            c["outOfScope"], "（其中 %d 条引擎给出命中）" % c["outOfScopeHit"] if c.get("outOfScopeHit") else ""))
-    if L:
-        notes.append("结论「%s」取自命中规则中最严的处置级别，共 %d 条命中规则进入漏斗，其中该级别 %d 条。" % (L["level"], len(rec), len(at_level)))
-    else:
-        notes.append("%s，不给出通过结论。" % fn["why"])
-    if other_lv and not release:
-        notes.append("另有 %d 条命中规则属于结论之外的级别（%s），已并入下一步，未计入结论。" % (len(other_lv), "、".join(dict.fromkeys(h["level"] for h in other_lv))))
-    if unrec:
-        nm = "；".join("%s（riskMeasure：%s）" % (h["ruleName"], h["riskMeasure"] or "空") for h in unrec[:3])
-        notes.append("有 %d 条命中规则的处置级别不在漏斗五级内，未计入结论：%s%s。" % (len(unrec), nm, "等" if len(unrec) > 3 else ""))
-    if lv is not None and L["level"] in ("转人工", "通过") and (sk_adm + cU) > 0:
-        notes.append("该结论仅基于已判定的规则；另有 %d 条准入阶段规则因所需属性未取得而未判定或未触发，可能影响结论。" % (sk_adm + cU))
-
     def block(head, items, numbered):
         return "\n".join([head] + [("%d. " % i if numbered else "") + t for i, t in enumerate(items, 1)])
 
@@ -986,17 +964,15 @@ def cmd_summary(a):
     if att:
         parts.append(block(H["attention"], att, True))
     summ = "\n\n".join(parts)
-    dbg = summ + "\n\n" + block(H["note"], notes, True)
     os.makedirs(os.path.join("work", a.rid), exist_ok=True)
     if lv is not None:
         with open(os.path.join("work", a.rid, "summary-draft.json"), "w", encoding="utf-8") as f:
             json.dump(draft, f, ensure_ascii=False, indent=1)
     with open(os.path.join("work", a.rid, "summary-final.json"), "w", encoding="utf-8") as f:
-        json.dump({"summary": summ, "summary_debug": dbg}, f, ensure_ascii=False, indent=1)
+        json.dump({"summary": summ}, f, ensure_ascii=False, indent=1)
     print("OK 结论 %s；依据 %d 条；下一步 %d 条" % (L["level"] if L else "无", len(basis), len(nxt)))
     print("SUMMARY " + jstr(summ))
-    print("SUMMARY_DEBUG " + jstr(dbg))
-    final = final_output(a.rid, summ, dbg)
+    final = final_output(a.rid, summ)
     if final is not None:
         print("FINAL " + jstr(final))
 
@@ -1015,14 +991,14 @@ def no_curly(x):
     return x
 
 
-def final_output(rid, summ, dbg):
-    """v37：最终结果（input、notes、summary、summary_debug）由脚本拼好，打印成一行 FINAL，模型原样作为 GenerateStructuredOutput 的参数。
+def final_output(rid, summ):
+    """最终结果（input、notes、summary）由脚本拼好，打印成一行 FINAL，模型原样作为 GenerateStructuredOutput 的参数。
     input 取最近一次 build 的 input-combine.json（就是调引擎时传的 INPUT），notes 取 notes-final.json。"""
     cf, nf = os.path.join("work", rid, "input-combine.json"), os.path.join("work", rid, "notes-final.json")
     if not (os.path.isfile(cf) and os.path.isfile(nf)):
         print("WARN 没有 input-combine.json 或 notes-final.json，不输出 FINAL：input、notes 用最近一次 build 的 INPUT、NOTES 行")
         return None
-    final = {"input": ct.load(cf)["input"], "notes": no_curly(ct.load(nf)), "summary": no_curly(summ), "summary_debug": no_curly(dbg)}
+    final = {"input": ct.load(cf)["input"], "notes": no_curly(ct.load(nf)), "summary": no_curly(summ)}
     with open(os.path.join("work", rid, "final-output.json"), "w", encoding="utf-8") as f:
         json.dump(final, f, ensure_ascii=False, indent=1)
     return final

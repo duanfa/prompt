@@ -16,7 +16,7 @@ metadata:
 | 文件 | 用途 |
 |---|---|
 | `scripts/detail.py` | 明细脚本：`init` 预填、`fill` 合并你读材料得到的行并重算派生、`recheck` 提交二次识别结果、`compare`（只读，12 项比对）、`show`、`finish` |
-| `scripts/combine.py` | 组装脚本：`plan`（只读，列出键与条目）、`build`（按你基于当次定义提交的 map/skip/set 组装并校验，生成并校验 `input-combine.json`，打印 `CHECK`，映射落盘 `work/<id>/key-map.json`）、`validate`；只读摘要 `rules`、`props`；`result`（从引擎原始返回过滤出命中规则，写 `work/<id>/hit-rules.json`，打印计数、漏斗结论和 `NEED_BASIS`）；`summary`（只读 hit-rules.json，校验依据/下一步草稿，渲染 summary、summary_debug，打印最终结果 `FINAL`）。**业务属性映射和判断由模型决定；脚本不设默认业务属性表或派生公式** |
+| `scripts/combine.py` | 组装脚本：`plan`（只读，列出键与条目）、`build`（按你基于当次定义提交的 map/skip/set 组装并校验，生成并校验 `input-combine.json`，打印 `CHECK`，映射落盘 `work/<id>/key-map.json`）、`validate`；只读摘要 `rules`、`props`；`result`（从引擎原始返回过滤出命中规则，写 `work/<id>/hit-rules.json`，打印计数、漏斗结论和 `NEED_BASIS`）；`summary`（只读 hit-rules.json，校验依据/下一步草稿，渲染 summary，打印最终结果 `FINAL`）。**业务属性映射和判断由模型决定；脚本不设默认业务属性表或派生公式** |
 | `scripts/combine_tool.py`、`scripts/combine_config.json` | 上面两个脚本用的库和配置 |
 | `extract-items-checked.json` | **清单（唯一数据源）**：人工核对过的全部条目（id/group/name/desc，条数以文件为准）。改清单只改它；脚本按条目名称归组，在补充材料里插入/调整条目不必改脚本 |
 

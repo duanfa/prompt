@@ -1,3 +1,13 @@
+## 当前修订：移除调试摘要（2026-11-09，版本仍为 0.1）
+
+- 最终结构化输出仅保留 `input`、`notes`、`summary`；schema、主提示词和 output / catalog skill 同步。
+- `combine.py summary` 仅打印 `SUMMARY` 与 `FINAL`，`summary-final.json` 仅含 `summary`，不再生成调试摘要及说明段。结论、依据、下一步、有事项时的注意段保持现有逻辑；规则计数和处置级别仍保存在命中规则明细和运行日志中。
+- 台账参考实现、回归断言和验收说明一并更新。全量 **129 项测试通过**；catalog / output 技能压缩包与源码逐文件核对一致，`runtime_manifest.json` 已重算（runtime 43,930，script 168,529）。
+
+以下历史修订中涉及摘要格式的描述，以本节及当前 output skill 为准。
+
+---
+
 ## 当前修订：一般行业兜底（2026-11-09，版本仍为 0.1）
 
 依据 trace `d6ca22bf3aa15455fedd581b4a9f3536`（205 号）：所属行业和实际业务均已按软件开发判断为一般行业，但用工场景漏映射，触发空值拦截。
@@ -178,11 +188,11 @@
 | ① 清单 | `extract-items-checked.json` | 换成你改过的清单（166 → 162 条）：删 D03「账户性质允许」、I01–I10「管理员信息与客户登记表」；新增 B24/B25（成立日期、营业期限）、B26「是否灵工平台企业」、C13/C14（身份证有效期起止）、G09「双方都盖章」、G10「结束时间」；G04 改为「开始时间」；D02、D10、F03、F04 的 desc 更新。`extract-items-modify.json` 不再单独保留 |
 | ① 清单 | `detail.py` | 删去 I 组预填（v38 的 `REG_FIELDS` 等）；租期改为 G04 开始 + G10 结束算「在租期内」G05 与「快到期」G07；B24/B25 由 B04/B05 原样带出（同一栏位，不让模型重复读）；B26 按执照经营范围 B08 逐词核对 desc 里的词表（人力外包、灵活用工、劳务派遣、劳务外包、劳务服务、劳务中介、劳务输出）；D03 派生删除；名称锚点同步 |
 | ① 清单 | `combine_config.json` defaultMap | 用工场景只取 A08 项目内容原文（I07 没了）；账户性质改由 D02 原文按关键词派生（含「专用」「临时」→ other，基本户/一般户不传）；`AdmissionDoc.lease_contract_both_sealed` 由 skip R10 改为取 G09 |
-| ②③ summary | `combine.py summary` | 依据、下一步里（「」原文之外）出现清单编号（B08…）、原因码（R06…）、英文字段名/变量名（entpName、scene_photo_count…）或技术词（属性、字段、枚举、编码、引擎、入参、映射、派生、漏斗…）就退回，ERR 里给出业务说法；analysis 先把代号换成中文再校验。“注意”段、宽松模式补齐的话术、结论行由脚本统一换成业务用语（附件字段名→材料中文名，请求字段名→“企业名称/项目内容”等，`工商:D.xxx`→“工商登记信息”，清单编号→条目中文名，原因码、工具名去掉）。暂无结论时结论行写“提交的信息还不足以完成自动核验”，技术原因只留在 summary_debug 的说明里 |
+| ②③ summary | `combine.py summary` | 依据、下一步里（「」原文之外）出现清单编号（B08…）、原因码（R06…）、英文字段名/变量名（entpName、scene_photo_count…）或技术词（属性、字段、枚举、编码、引擎、入参、映射、派生、漏斗…）就退回，ERR 里给出业务说法；analysis 先把代号换成中文再校验。“注意”段、宽松模式补齐的话术、结论行由脚本统一换成业务用语（附件字段名→材料中文名，请求字段名→“企业名称/项目内容”等，`工商:D.xxx`→“工商登记信息”，清单编号→条目中文名，原因码、工具名去掉）。暂无结论时结论行写“提交的信息还不足以完成自动核验”，技术原因保存在命中规则明细和运行日志中 |
 | ②③ summary | `combine_config.json` | 新增 `plainLanguage`（禁用词、建议说法、字段中文名、暂无结论的业务说法）；`noConclusion` 去掉“漏斗” |
 | ②③ summary | output skill 3.2 | 新增“summary 是给客户看的”写法要求与对照表（不要这样写 → 改成） |
 | ④ 规则先筛 | `combine.py build` | 组装前先判断规则是否与客户准入有关（`RULE_SCOPE`）：适用阶段只属签约/结算/处置/复核治理、名称和说明不提准入/禁入/入驻、条件里也没有一个键能由准入资料取到的，判为无关并列出；**它们条件里的字段不进 input-combine.json**（refKeys、unfilled、notes.unresolvedProperties 都不出现），`rulesDropped` 记录规则 ID 与原因。模型可在 build 的 stdin 用 `{"rules":{"keep":[…],"drop":{"规则ID":"原因"}}}` 改判，落盘 key-map.json。签约阶段但由准入资料判定的规则（开户名称一致、账户性质、职场视频）保留 |
-| ④ 规则先筛 | `combine.py result/summary`、`combine_tool.py validate` | 被抛掉的规则即使引擎给出命中，也不进命中表、不进漏斗、不进依据，result 打印 `OUT_OF_SCOPE`，说明段记条数；validate 的键数闭合只按保留的规则算 |
+| ④ 规则先筛 | `combine.py result/summary`、`combine_tool.py validate` | 被抛掉的规则即使引擎给出命中，也不进命中表、不进漏斗、不进依据，result 打印 `OUT_OF_SCOPE`，hit-rules.json 保留计数；validate 的键数闭合只按保留的规则算 |
 | ⑤ 灵工例外 | `combine.py`、`combine_config.json` `flexJobException` | 企业名称/工商行业属金融、医疗医药、影视、律师/会计、矿业能源、建筑施工，且岗位名称/项目内容/交付要求/项目简介含展会、地推、促销、活动执行、搬运分拣等临时辅助岗位词、又不含该行业业务词（金融：催收、贷款、理财、开户、办卡、拉新、保险销售等）时，“注意”里加一条：“企业属于X类行业，该行业一般不开展灵活用工；但本次招聘的「岗位原文」属于临时性、辅助性岗位，不涉及X业务本身，可以按灵活用工承接，建议人工核实……”。只提醒，**不改结论**；传销、违法灰产不设例外。NEED_BASIS 打印 `FLEX_JOB` 提示模型下一步可请对方补岗位说明 |
 | 文档 | 主提示词、facts / discover / materials / output skill、回归清单 | 红线 11 → 13 条（新增 12 规则先筛、13 灵工例外），轮次表第 4 轮说明；materials 表补 C13/C14、G04/G09/G10；facts 派生清单、defaultMap 说明同步；回归清单新增 v39 五行、删 v38 登记表一行 |
 | 测试 | `integration/` | 夹具 fill_spec 拆租期（G04/G10）、补 G09；map_spec 的 account_type_allowed 改 skip；新增 test_scripts 5 条（用工场景取 A08、新条目派生、G09 进双方盖章、规则先筛、抛掉的规则不进结论），删 v38 I 组 4 条；test_summary 新增 3 条（依据/下一步拒代号与技术词、注意段改写成业务用语、灵工例外提醒），4 处断言按新话术改 |
@@ -280,7 +290,7 @@
 | `combine_config.json` | 新增 `defaultMap`：本体当前规则引用的 64 个键的默认处理（map 到清单条目，或 skip 原因码），每条带属性 label；本次定义的 label 不同就不套用。派生口径：`image_ok`（彩色或鲜章任一 true 即合格，都 false 或文字不清晰为不合格）、`when_false`（账户性质/租期/证件有效期/执照状态：依据为 false 传 other/expired，为 true 不传）、`keyword_code`（企业类型含分公司/合伙/个独/个体时传编码）、`count_true`（三类证明都有值时计数）。发票关联方、合同配套映射到 H10/H14，**未提供时不传**（v35 有两次推成 false）；双方盖章、照片真实性、用工场景、主营核验类等无口径的 skip |
 | `combine.py build` | 模型没提交的键套用 defaultMap（模型 map/skip 优先）；不带 stdin 即可一次组装完成；打印 `DEFAULT_MAP`/`DEFAULT_OFF`；新增 `CHECK`（伪造嫌疑类条目依据含“真实/合规/正常/可信/无异常”、E05 不是 true/false）——替代自审 A 的机械项，有 CHECK 退出 1 |
 | `combine.py result` | 直接打印 `NEED_BASIS`（暂无结论打印 `NO_DRAFT`），省掉一轮不带 stdin 的 summary |
-| `combine.py summary` | 通过后打印 `FINAL {input,notes,summary,summary_debug}` 并写 `final-output.json`，模型原样作为 GenerateStructuredOutput 参数；notes/摘要里的弯引号统一成「」 |
+| `combine.py summary` | 通过后打印 `FINAL {input,notes,summary}` 并写 `final-output.json`，模型原样作为 GenerateStructuredOutput 参数；notes/摘要里的弯引号统一成「」 |
 | `combine.py` “注意”段 | 模型 conflicts 里涉及工商比对的、“待比对”的、只差括号全半角的不再进“注意”；重复的附件名、重复的“未作为已核实”去掉 |
 | `detail.py fill` | 重交脚本预填的行打印 `SKIP`，不算错；漏写「｜」时认不出来源就用该条所属材料作来源（AUTOFIX），不再 REJECT；伪造嫌疑类有值行写入时去掉含断言的分句（`TRIMMED`） |
 | output skill | 重写：删除审核 A/B 的 Agent 模板与自审要求（13 567 → 4 678 字），流程改为 build → 引擎 → result → summary → 提交 FINAL；下一步不得猜类别、不得加规则没有的要求 |
@@ -313,7 +323,7 @@ test_scripts 55、test_combine_tool 1、test_rule_ledger 14、test_summary 27 �
 
 改动：
 1. `combine_config.json` 的 `riskLadder` 改 4 级：建议放行→转人工（副标题“需转人工核验后决定是否入驻”），放行并关注、放行→通过（“可正常入驻”）。副标题仍是草稿，请审。riskMeasure 必须与级别逐字相同，**引擎规则返回“建议放行”“放行并关注”“放行”将不再被识别**（进 `FUNNEL_UNRECOGNIZED`）；需要引擎侧把这些规则的 riskMeasure 改为“转人工”“通过”。
-2. `combine.py`：下一步口径（`NEXT_HINT`/`OTHER_HINT`）把建议放行与放行并关注合并为“转人工”一条；通过级沿用原放行级逻辑（依据夸资料 4–6 条，下一步固定“✅ 业务可正常开展、正常入驻。”）；说明段的“可能影响结论”提醒对转人工、通过生效；提示文字“放行”→“通过”。
+2. `combine.py`：下一步口径（`NEXT_HINT`/`OTHER_HINT`）把建议放行与放行并关注合并为“转人工”一条；通过级沿用原放行级逻辑（依据夸资料 4–6 条，下一步固定“✅ 业务可正常开展、正常入驻。”）；未判定与未触发计数保存在命中规则明细中；提示文字“放行”→“通过”。
 3. output skill、主提示词、回归清单同步；测试按新级别改名，图片场景夹具的 riskMeasure “放行并关注”改为“转人工”。修订号、manifest、zip 重算。
 
 验证：test_scripts 44、test_combine_tool 1、test_rule_ledger 14、test_summary 23 全部通过。
@@ -328,7 +338,7 @@ test_scripts 55、test_combine_tool 1、test_rule_ledger 14、test_summary 27 �
 改动（`combine.py summary` + 提示词）：
 1. 结论之外、已命中且级别在漏斗内的规则（放行级除外，它没有要处理的事项）单列为“其余命中级别的规则”：NEED_BASIS 多打印一段（ruleId|级别|ruleName|reason|comment 全文）和各级处理口径（`OTHER_HINT`）。依据仍只写结论级别的规则，结论不变。
 2. 草稿 `next` 的元素可以是字符串（结论级别的事项，最多 8 条，不变），也可以是 `{"ruleIds":[…],"text":"…"}`；其余级别的每条命中规则必须至少出现在一条带 ruleIds 的下一步里，否则报“没有出现在任何一条下一步里”；ruleIds 不属于结论级别或其余级别（如放行级、未命中）报错；文字仍过原有校验（无规则 ID/英文属性名、「」引文逐字）。
-3. 说明段（只进 summary_debug）加一句“另有 N 条命中规则属于结论之外的级别（…），已并入下一步，未计入结论”。
+3. 其余级别的命中规则仍须逐条并入下一步；命中明细保存在 hit-rules.json，不额外生成说明段。
 4. output skill 3.2、审核条款 2、主提示词第 11 条、回归清单同步；修订号、manifest、zip 重算。
 
 验证：test_scripts 44、test_combine_tool 1、test_rule_ledger 14、test_summary 23（新增 1，改 1 个旧用例：原断言“其余级别不出现在 NEED_BASIS”，现改为单列段并要求 next 覆盖）全部通过。
@@ -399,7 +409,7 @@ test_scripts 44（新增 4）、test_combine_tool 1、test_rule_ledger 14、test
 
 ## summary 结构
 
-`## 结论` / `## 依据` / `## 下一步` / **`## 注意`（新增）**；summary_debug = summary + `## 说明`。“注意”没有任何事项时不出现。**“注意”由 `combine.py summary` 从明细文件生成，不经模型**，所以不用模型再写一遍，也不会写偏。
+`## 结论` / `## 依据` / `## 下一步` / **`## 注意`（新增）**；不生成说明段。“注意”没有任何事项时不出现。**“注意”由 `combine.py summary` 从明细文件生成，不经模型**，所以不用模型再写一遍，也不会写偏。
 
 ## “注意”里有什么
 
@@ -503,7 +513,7 @@ test_scripts 40、test_combine_tool 1、test_rule_ledger 14、test_summary 22（
 
 ## 先回答：summary-draft.json 是什么
 
-它**不是**总结结果，是模型提交的「依据/下一步」草稿（`{"basis":[…],"next":[…]}`），在 `combine.py summary` 校验通过后才落盘，只作留档，后面没有任何步骤读它。真正的总结结果是同目录的 `summary-final.json`（渲染后的 summary、summary_debug），也就是 SUMMARY / SUMMARY_DEBUG 两行的内容。本版只把这两个文件的用途写进了 output skill，没改它们。
+它**不是**总结结果，是模型提交的「依据/下一步」草稿（`{"basis":[…],"next":[…]}`），在 `combine.py summary` 校验通过后才落盘，只作留档，后面没有任何步骤读它。真正的总结结果是同目录的 `summary-final.json`（仅含渲染后的 summary），也就是 SUMMARY 行的内容。本版只把这两个文件的用途写进了 output skill，没改它们。
 
 ## 改动
 
@@ -511,7 +521,7 @@ test_scripts 40、test_combine_tool 1、test_rule_ledger 14、test_summary 22（
 |---|---|---|
 | 1 | `combine.py result --rid <id> --file <原始返回>`：从原始返回里只摘出 result=true 的规则，写 `work/<id>/hit-rules.json`：`hits`（ruleId、ruleName、riskMeasure、漏斗级别、是否结论级别、reason、comment 全文、stage）+ `counts`（总数、已判定、命中、未命中 F/U、skip、后续阶段 skip、未知状态、重复 ID）+ `funnel`（结论级别、副标题、无结论原因）+ `source`（原始文件 path、sha256、全部 ruleId） | `combine.py` |
 | 2 | `result` 的打印只列命中规则；未命中（am2 是 12 条 F）和 skip（63 条）只给计数。`FUNNEL_HITS` 改列 ruleId，不再列小表序号（am2 模型把序号 15 读成了“15 条命中”） | `combine.py` |
-| 3 | `combine.py summary --rid <id>` 只读 hit-rules.json，不再读原始返回；说明段的计数取自 `counts`。仍兼容旧调用 `--file`（给了就先重新生成 hit-rules.json） | `combine.py` |
+| 3 | `combine.py summary --rid <id>` 只读 hit-rules.json，不再读原始返回；规则计数保存在 `counts`。仍兼容旧调用 `--file`（给了就先重新生成 hit-rules.json） | `combine.py` |
 | 4 | 审核 B 不再复制“规则小表”和 NEED_BASIS，改为 Read hit-rules.json（H）和明细（E）；自审对照也指向 H 里的 comment | output skill 3.4 |
 | 5 | 引擎没跑起来（ENGINE_FAILED，退出 5）时不写 hit-rules.json | `combine.py` |
 | 6 | 主提示词执行表第 7 行、第一节第 4 条，catalog 文件表，output 第三节同步；写明 summary-draft.json / summary-final.json 的用途 | 主提示词、catalog、output |
@@ -525,7 +535,7 @@ test_scripts 40、test_combine_tool 1、test_rule_ledger 14、test_summary 22（
 ## 验证
 
 - integration：test_scripts 32、test_combine_tool 1、test_rule_ledger 14、test_summary 19（原 16 + 新 3）全部通过。原有 2 个用例因输出格式变化（计数行措辞、FUNNEL_HITS 改列 ruleId、未命中行不再打印）改了断言，期望的数值不变。
-- 新增用例：hit-rules.json 只含命中规则且 comment 全文、计数正确；**删掉原始返回文件后** summary 仍能出 NEED_BASIS 并渲染，说明段计数与原来一致；依据里写未命中规则的 ID 仍被拒；没有 hit-rules.json 时 summary 提示先跑 result；引擎失败不生成文件。
+- 新增用例：hit-rules.json 只含命中规则且 comment 全文、计数正确；**删掉原始返回文件后** summary 仍能出 NEED_BASIS 并渲染，命中明细计数与原来一致；依据里写未命中规则的 ID 仍被拒；没有 hit-rules.json 时 summary 提示先跑 result；引擎失败不生成文件。
 - 七个 `SKILL.md.zip` 重新打包并逐字节核对；runtime_manifest 重算（runtime 40 186 → 40 881 字符，script 105 636 → 108 277）。
 - **未在真实 WanScope 运行**；am2 的引擎原始返回不在 trace 里（只有落盘元数据），没法用它复现。
 
@@ -549,7 +559,7 @@ test_scripts 40、test_combine_tool 1、test_rule_ledger 14、test_summary 22（
 | 2 | 模型从头到尾没有用 Read/Write/Edit/Glob/Grep（全部由脚本完成） | 主提示词里“明细一次 Write、Write/Edit 不与引擎同轮、不要 Read/Grep 落盘文件”等在 4 处重复，合并为第一节第 3、4 条各一次 |
 | 3 | **视频问法没被遵守**：video skill 与 ReadVideo 在**同一轮**发出（第 2 轮），模型调 ReadVideo 时还没看到固定问法，实际问的是“是否为真实办公场所……是否有叠化转场、无人空镜、渲染感”——正是 video skill 禁止的问法 | 这是结构问题，不是措辞问题：固定问法从 video skill **移到主提示词第二节**，第 2 轮调 ReadVideo 时已在上下文里；video skill 只保留取值与重试规则 |
 | 4 | 主提示词红线与各 skill **大段重复**：四个标识预设在主提示词、discover、facts、output 各写一遍；二次识别的四种判定在红线 9 和 materials 各写全一遍，catalog、business、facts 再各复述一次；漏斗规则在主提示词开头、红线 11、output 3.1 各写一遍 | 每条规则只在一个地方写全，其余位置改为一句话 + 指向 |
-| 5 | 部署的主提示词比仓库 v30 **旧一版**（trace 里还是“固定四段”、没有 summary_debug；skill 是新的） | 不是提示词问题；见“部署”第 1 条 |
+| 5 | 部署的主提示词比仓库 v30 **旧一版**（trace 里还是“固定四段”的旧摘要结构；skill 是新的） | 不是提示词问题；见“部署”第 1 条 |
 | 6 | `combine.py build` 带 `set` 补了 `business_license_image_ok` 之后，因 B23/C10 `fill --force` 又重跑 build（不带 set），该值丢失，模型发现后重提一次 | v30 提示词说“映射落盘沿用”，没说 set 不落盘 → 加一句“set 不落盘，之后每次重跑 build 都要再带上”（脚本行为如此，只是把它写出来） |
 | 7 | 模型把 `FUNNEL_HITS 拦截:15` 读成“15 条命中”并困惑 | `15` 是小表序号。output skill 第三节加半句说明（不改脚本） |
 | 8 | 自审时模型自己发现 B23/C10 写了“国内真实地址”并改掉 | facts 的禁用字样规则起作用了；保留，并补“含‘国内真实地址’这类写法” |
@@ -599,7 +609,7 @@ test_scripts 40、test_combine_tool 1、test_rule_ledger 14、test_summary 22（
 
 **最新一处修订（你的决定）：四个标识预设，不再由模型映射**——entpId→`Employer.employer_id`、entpName→`Employer.enterprise_name`、rqId→`Demand.demand_id`、hrInstId→`LaborAgency.agency_id` 与 `Agency.agency_id`；四个 ID 不可互换。这**推翻了我上一版的取舍**（我当时按“映射不能写死”没有预先传 `Agency.agency_id`，导致每个请求会先失败一次）。详见下面“四个标识预设”一节。
 
-**最新修订（你的决定，2026-11-06）：摘要规则重写，删除 summary_debug。** 之前的摘要规则整体作废（T/F 全覆盖、“（X级）/（未命中）”标签、按阶段汇总“重新核查”、收尾追问、说明段、来源标注）。新规则只按**漏斗卡在的级别**写：拦截=依据围绕命中规则的 comment 举证、下一步告诉怎么改正；建议拦截=依据同上、下一步转人工核验+怎么降低风险点；建议放行=依据同上、下一步转人工核验+怎么降低违规嫌疑/补佐证；放行并关注=依据围绕 comment 指出小不足、下一步怎么提高；放行=依据围绕提交的资料夸真实合规（4–6 条）、下一步固定一条。`summary` 为 `## 结论 / ## 依据 / ## 下一步` 三段；`summary_debug` = summary + `## 说明` 段（脚本生成：计数、结论取自哪一级、未识别的 riskMeasure、放行类提醒；无“【来源：】”标注）；最终仍提交 input、notes、summary、summary_debug 四个字段，schema 不用改。草稿格式：`{"basis":[{"ruleIds":[…],"text":"…"}],"next":["…"]}`，脚本校验：依据只能引用结论级别的命中规则且逐条覆盖、放行级条数、引文须逐字出自提取明细、不含规则 ID/英文属性名。下面表格里关于“来源标注”的描述是 v30 初版，已被本段取代。`integration/rule_ledger.py` 及其测试、台账接入文档是 v29 遗留且未部署，仍按旧格式生成 summary_debug，本次没动。
+**最新修订（你的决定，2026-11-06）：摘要规则重写，删除 summary_debug。** 之前的摘要规则整体作废（T/F 全覆盖、“（X级）/（未命中）”标签、按阶段汇总“重新核查”、收尾追问、说明段、来源标注）。新规则只按**漏斗卡在的级别**写：拦截=依据围绕命中规则的 comment 举证、下一步告诉怎么改正；建议拦截=依据同上、下一步转人工核验+怎么降低风险点；建议放行=依据同上、下一步转人工核验+怎么降低违规嫌疑/补佐证；放行并关注=依据围绕 comment 指出小不足、下一步怎么提高；放行=依据围绕提交的资料夸真实合规（4–6 条）、下一步固定一条。`summary` 为 `## 结论 / ## 依据 / ## 下一步` 三段；最终仅提交 input、notes、summary 三个字段；schema 同步，不生成调试摘要或说明段。草稿格式：`{"basis":[{"ruleIds":[…],"text":"…"}],"next":["…"]}`，脚本校验：依据只能引用结论级别的命中规则且逐条覆盖、放行级条数、引文须逐字出自提取明细、不含规则 ID/英文属性名。下面表格里关于“来源标注”的描述是 v30 初版，已被本段取代。`integration/rule_ledger.py` 及其测试、台账接入文档是 v29 遗留且未部署，当前已同步为仅生成 summary。
 
 先说结论：**v29 及以前明确“不给整体准入结论”，v30 把它反过来了**——摘要现在有结论，结论只取命中规则 `riskMeasure` 的漏斗结果。这是业务口径的变化，不是我顺手加的功能。
 
@@ -607,7 +617,7 @@ test_scripts 40、test_combine_tool 1、test_rule_ledger 14、test_summary 22（
 |---|---|---|---|
 | 1 | 摘要是“首句计数 + 【类别】命中/未命中”的纯文本，没有结论，也没有 riskMeasure | 摘要固定四段：`## 结论`（「级别｜副标题」）、`## 依据`、`## 下一步`、`## 说明`，各段编号列表，标题来自配置，前端按标题切分 | `combine.py summary`、`combine_config.json`、output skill 第三节 |
 | 2 | 结论怎么来 | 漏斗：**只看命中（result=true）规则的 riskMeasure，取最严的一级**；`riskMeasure` 必须与五级之一**逐字相同**才进漏斗，复合写法、空值不识别、不猜、不拆分，列入说明；有已判定规则但一条没命中 → 放行；**没有已判定规则，或命中规则的 riskMeasure 都不识别 → “暂无结论”，不给放行** | `combine.py result / summary` |
-| 3 | 摘要里的数字、结论、编号靠模型写，历史上多次被实测推翻（v24→v26 自审写“约 120 ✓”） | **结论、下一步、说明、编号、级别标签、来源标注、summary_debug 全由脚本生成**；模型只写“依据”每一条的文字，脚本校验：每条 T/F 规则至少出现一次、U 和 skip 不进依据、不混桶、不混处置级别、F 依据不得写“已合规/已核实/已满足/已一致/有效期内”、不含规则 ID/英文属性名/【】、「」引文必须逐字出自申报原文（A07–A10、A13，可用…省略）。`summary` = `summary_debug` 去掉全部“【来源：…】” | `combine.py summary` |
+| 3 | 摘要里的数字、结论、编号靠模型写，历史上多次被实测推翻（v24→v26 自审写“约 120 ✓”） | **当前结论、编号由脚本生成，依据和下一步由模型写草稿并经脚本校验**；模型只写“依据”每一条的文字，脚本校验：每条 T/F 规则至少出现一次、U 和 skip 不进依据、不混桶、不混处置级别、F 依据不得写“已合规/已核实/已满足/已一致/有效期内”、不含规则 ID/英文属性名/【】、「」引文必须逐字出自申报原文（A07–A10、A13，可用…省略）。当前仅输出 `summary`，不生成来源标注和说明段 | `combine.py summary` |
 | 4 | 下一步（图里 5 条）从哪来 | 按你的选择“命中规则的 comment 动态生成”：①该级别固定开头 ②结论级别命中规则的 comment 描述（逐字）③结论为建议放行/放行并关注/放行时，按适用阶段（需求发布/签约/结算/处置）汇总 skip 规则成“<阶段>时重新核查：规则名…” ④comment 里「｜」后的额外段逐字作“提示：” ⑤配置里的收尾追问。**没有来源的内容不写**（例如图里“单人月结算上限 20 万”，只有某条规则的 comment 带这个额外段才会出现） | `combine.py summary` |
 | 5 | v29 的台账路径（`FinalizeRuleSummary` / `rule_ledger.py`）按旧摘要格式渲染 | **本版不使用**，output skill 第三节 3.6 写明；`rule_ledger.py` 和它的 14 个测试没改（仍按 v29 格式通过），接入前必须先改 | output skill、`integration/` |
 | 6 | 失败状态 | 引擎失败、审核未完成、摘要未完成三种仍是**纯文本一句话**，不拼四段 | output skill 第四节 |

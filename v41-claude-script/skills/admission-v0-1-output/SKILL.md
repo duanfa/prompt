@@ -35,12 +35,12 @@ build 通过后，用**最近一次 `combine.py build` 输出的 `INPUT` 行**�
 - 仅调用报错/非成功码、明确指出名称或枚举错误、明确日期格式错误时，可用 `fill --force` 修明细并重跑 build 后最多再调一次。第二次仍失败，toolIssues 写工具名、实际错误和简短原因，照常提交失败状态说明。
 - **引擎“没跑起来”也是失败，哪怕 `code=0`**：`data.ruleCheckList` 为 null、另有 `failures` 时，`combine.py result` 打印 `ENGINE_FAILED`、逐条 `FAILURE`，退出码 5；**不要再用 Read/Grep 读原始文件**。处理：
   1. 有 `MISSING_INPUT_KEY X.y`：在 build 的 stdin 里补一条 `{"map":{"X.y":{"ids":["<对应的标识条目>"],"force":true}}}`（A01 企业 ID、A02 企业名称、A03 需求 ID、A04 机构 ID，按含义选，不确定就不补），重跑 build，再调一次引擎。只补点名的那个键。
-  2. 没有 `MISSING_INPUT_KEY`、或补传后仍是 `ENGINE_FAILED`：不再重试，toolIssues 写 `failures` 原文，summary / summary_debug 都写“审核未完成：规则引擎执行失败，无可用规则结果。”。
+  2. 没有 `MISSING_INPUT_KEY`、或补传后仍是 `ENGINE_FAILED`：不再重试，toolIssues 写 `failures` 原文，summary 写“审核未完成：规则引擎执行失败，无可用规则结果。”。
 - 最终 input 必须等于最后一次成功调用的 request.input。
 
 ## 三、摘要
 
-summary 固定三段：**结论 / 依据 / 下一步**；有事项时脚本加第四段 **注意**；summary_debug = summary + **说明**。结论、注意、说明由脚本生成，你不写、不改；结论行和“注意”给客户看，脚本已把字段名、清单编号、原因码换成业务用语，技术细节只留在 summary_debug 的“说明”里。**依据**和**下一步**由你写草稿，脚本校验后渲染。
+summary 固定三段：**结论 / 依据 / 下一步**；有事项时脚本加第四段 **注意**。结论、注意由脚本生成，你不写、不改；结论行和“注意”给客户看，脚本已把字段名、清单编号、原因码换成业务用语。技术细节保存在命中规则明细和运行日志中。**依据**和**下一步**由你写草稿，脚本校验后渲染。
 
 **notes.conflicts 只写脚本比对不到的冲突**，每条“材料中文名、冲突字段、双方原文各一句”。**工商与执照/材料的比对（名称、信用代码、注册资本、经营范围等）脚本已经写进“注意”，不要再写进 conflicts**；只差括号全半角、空格的不算冲突。
 
@@ -84,7 +84,7 @@ summary 固定三段：**结论 / 依据 / 下一步**；有事项时脚本加�
 
 ### 3.3 `combine.py summary --rid <requestId>`（草稿放 stdin）
 
-- 通过：打印 `OK …`、`SUMMARY`、`SUMMARY_DEBUG`，以及 **`FINAL {…}`**——脚本拼好的最终结果（input = 最近一次 build 的 input-combine.json，即调引擎时的 INPUT；notes = 最近一次 build 的 notes；summary、summary_debug；弯引号已统一成「」），同时写 `work/<requestId>/final-output.json`。
+- 通过：打印 `OK …`、`SUMMARY`，以及 **`FINAL {…}`**——脚本拼好的最终结果（input = 最近一次 build 的 input-combine.json，即调引擎时的 INPUT；notes = 最近一次 build 的 notes；summary；弯引号已统一成「」），同时写 `work/<requestId>/final-output.json`。
 - 不通过：打印 `ERR …` 退出 1。v39 起“要写给客户看，用业务用语”也会退回：按提示把代号、技术词换成中文业务说法。**只改被点名的条目**，其余原样再提交；引文被拒时 ERR 会给出“最接近的原文”，逐字抄其中一段，或去掉「」改用自己的话，**不要只改标点再试**。
 - **被拒 2 次后，第 3 次提交由脚本收尾**：不合格的条目直接丢弃，缺的依据/下一步用规则名称和说明补齐（打印 `LENIENT …`），一定打印 `FINAL`。所以 summary 最多跑 3 次，不要再多。退出 3 = 引擎结果不完整，按第四节。
 
@@ -93,7 +93,7 @@ summary 固定三段：**结论 / 依据 / 下一步**；有事项时脚本加�
 - **GenerateStructuredOutput 的参数 = `FINAL ` 后面那个 JSON，原样**：不改字、不重排、不改标点、不增删字段。单独调用一次，成功即结束。
 - 引擎失败需要在 notes.toolIssues 追加错误时：在 FINAL 的 notes.toolIssues 末尾追加一条，其余不动。
 - 成功返回但没有已判定规则（全部 skip）：`NO_DRAFT` → `combine.py summary`，结论为“暂无结论｜无已判定（true/false）的规则”，不给通过。
-- 引擎执行失败：summary / summary_debug 都写“审核未完成：规则引擎执行失败，无可用规则结果。”，input、notes 用最近一次 build 的 `INPUT`、`NOTES` 行。
-- 摘要反复校验失败或退出 3：input、notes 同上，summary / summary_debug 都写“规则引擎已执行，摘要未完成：结果覆盖或一致性校验未通过。”。
-- 缺 domain/scene，或规则/属性工具整体失败且重试用尽：不发残缺引擎请求，toolIssues 第一条“审核未完成：规则引擎未执行（失败步骤及实际错误）”，input 只保留已确认的标识，summary / summary_debug 都写“审核未完成：规则引擎未执行，无规则结果可汇总。”。
-- 最终仅 input、notes、summary、summary_debug，不得添加其他字段。没有该工具时按主提示词第六节处理。
+- 引擎执行失败：summary 写“审核未完成：规则引擎执行失败，无可用规则结果。”，input、notes 用最近一次 build 的 `INPUT`、`NOTES` 行。
+- 摘要反复校验失败或退出 3：input、notes 同上，summary 写“规则引擎已执行，摘要未完成：结果覆盖或一致性校验未通过。”。
+- 缺 domain/scene，或规则/属性工具整体失败且重试用尽：不发残缺引擎请求，toolIssues 第一条“审核未完成：规则引擎未执行（失败步骤及实际错误）”，input 只保留已确认的标识，summary 写“审核未完成：规则引擎未执行，无规则结果可汇总。”。
+- 最终仅 input、notes、summary，不得添加其他字段。没有该工具时按主提示词第六节处理。

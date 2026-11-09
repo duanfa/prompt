@@ -1,4 +1,4 @@
-"""Backend reference: derive counts and render both summaries from trusted rules.
+"""Backend reference: derive counts and render a summary from trusted rules.
 
 Call in process, after receiving the untruncated engine response. The model must
 never supply the `response` argument. This module is not a runtime Skill/script.
@@ -197,12 +197,12 @@ def finalize(response, draft, *, engine_call_id, request_id, input_snapshot,
                  if counts["falseInsufficient"] else "")
         header = (f"本次共{counts['determined']}条规则给出明确结果"
                   f"（命中{counts['true']}条、未命中{counts['false']}条{extra}）。")
-        public, debug = [header], [header + "【来源：全部已判定规则】"]
+        public = [header]
         for cat in CATEGORIES:
             if not any(ordered[(cat, s, b)] for s in ("true", "false")
                        for b in ("determined", "insufficient")):
                 continue
-            plain_parts, debug_parts = [], []
+            plain_parts = []
             for state, basis, label, optional in (
                     ("true", "determined", "命中", False),
                     ("false", "determined", "未命中", False),
@@ -211,15 +211,11 @@ def finalize(response, draft, *, engine_call_id, request_id, input_snapshot,
                 if optional and not items:
                     continue
                 plain_parts.append(label + "：" + ("；".join(t for t, _ in items) or "无"))
-                debug_parts.append(label + "：" + ("；".join(
-                    t + "【来源：" + "、".join(ids) + "】" for t, ids in items) or "无"))
             public.append("【" + cat + "】" + "。".join(plain_parts) + "。")
-            debug.append("【" + cat + "】" + "。".join(debug_parts) + "。")
-        summary, summary_debug = "\n\n".join(public), "\n\n".join(debug)
+        summary = "\n\n".join(public)
     else:
         summary = "无已判定（true/false）的规则"
-        summary_debug = summary + "【来源：无】"
-    return {"ledger": ledger, "summary": summary, "summary_debug": summary_debug,
+    return {"ledger": ledger, "summary": summary,
             "validation": {"passed": True, "covered": len(covered),
                            "engineCallId": engine_call_id,
                            "responseSha256": ledger["responseSha256"],

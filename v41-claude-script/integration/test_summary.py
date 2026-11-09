@@ -31,6 +31,7 @@ class T(unittest.TestCase):
 
     def run_(self, *a, stdin=""):
         r = subprocess.run([sys.executable, "-I", SCRIPT, *a], cwd=self.ws, input=stdin, capture_output=True, text=True, env={"LANG": "C.UTF-8"}, timeout=30)
+        self.assertNotIn("SUMMARY_DEBUG ", r.stdout)
         return r.returncode, r.stdout + r.stderr
 
     def summary(self, eng, basis, nxt=None, rid="r1", analysis=None, fresh=True):
@@ -45,7 +46,10 @@ class T(unittest.TestCase):
         return self.run_("summary", "--rid", rid, "--file", eng, stdin=json.dumps(draft, ensure_ascii=False))
 
     def final(self, rid="r1"):
-        return json.load(open(os.path.join(self.ws, "work", rid, "summary-final.json"), encoding="utf-8"))
+        with open(os.path.join(self.ws, "work", rid, "summary-final.json"), encoding="utf-8") as f:
+            result = json.load(f)
+        self.assertEqual(set(result), {"summary"})
+        return result
 
     # ───── result：漏斗 ─────
 
@@ -71,7 +75,7 @@ class T(unittest.TestCase):
         rc, out = self.run_("summary", "--rid", "r1", "--file", eng)                  # 无结论：不用写草稿，脚本直接渲染
         self.assertEqual(rc, 0, out)
         s = self.final()["summary"]
-        self.assertIn("暂无结论｜提交的信息还不足以完成自动核验", s)          # v39：结论行用业务说法，技术原因只在说明里
+        self.assertIn("暂无结论｜提交的信息还不足以完成自动核验", s)          # 结论行用业务说法
         self.assertIn("转人工研判", s)
         self.assertNotIn("通过｜", s)
 
@@ -124,21 +128,15 @@ class T(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         s = self.final()["summary"]
         self.assertEqual(self.sections(s), ["## 结论", "## 依据", "## 下一步"])           # summary 没有“说明”段
-        dbg = self.final()["summary_debug"]
-        self.assertEqual(self.sections(dbg), ["## 结论", "## 依据", "## 下一步", "## 说明"])
-        self.assertEqual(dbg.split("\n\n## 说明\n")[0], s)                              # 去掉说明段后与 summary 逐字相同
         self.assertNotIn("核查完成", s)
-        self.assertEqual(set(self.final()), {"summary", "summary_debug"})
+        self.assertEqual(set(self.final()), {"summary"})
         self.assertNotIn("【来源", s)
         self.assertIn("## 结论\n转人工｜需转人工核验后决定是否入驻", s)
         self.assertIn("1. 实际业务属于典型影视灵工场景", s)
         self.assertNotIn("（转人工级）", s)                                          # 旧规则的级别/未命中标签不再生成
         self.assertEqual(self.part(s, "## 下一步"), ["1. " + nxt[0], "2. " + nxt[1]])
         self.assertNotIn("重新核查", s)
-        self.assertIn("核查完成：本次共", dbg)                                            # 说明段只在 summary_debug，由脚本生成
-        self.assertIn("结论「转人工」取自命中规则中最严的处置级别", dbg)
-        self.assertIn("另有 4 条跳过（其中 4 条属后续阶段规则，到该阶段再核验）", dbg)
-        self.assertNotIn("可能影响结论", dbg)                                             # 只有后续阶段的 skip，不提醒
+        self.assertNotIn("可能影响结论", s)
         self.assertNotIn("关联公司", s)                                                  # 旧的收尾追问删了
         self.assertFalse(re.search(r"RULE-[A-Z]+-\d+", s), s)
 
@@ -200,7 +198,7 @@ class T(unittest.TestCase):
         s = self.final()
         self.assertEqual(self.part(s["summary"], "## 下一步"), ["1. " + nxt[0], "2. " + nxt[1]["text"], "3. " + nxt[2]["text"]])
         self.assertEqual(len(self.part(s["summary"], "## 依据", "## 下一步")), 1)       # 其余级别不进依据
-        self.assertIn("另有 2 条命中规则属于结论之外的级别（建议拦截、转人工）", s["summary_debug"])
+        self.assertEqual(self.sections(s["summary"]), ["## 结论", "## 依据", "## 下一步"])
         self.assertFalse(re.search(r"R-[A-Z]+\b", s["summary"]), s["summary"])
 
     def test_each_blocking_level_has_its_own_next_step_hint(self):
@@ -418,7 +416,7 @@ class T(unittest.TestCase):
         self.assertIn("办公场所视频读取失败：视频读取两次均超时", text)
         self.assertNotIn("officeVideoUrl", text)
         self.assertNotIn("Url", text)
-        self.assertTrue(s["summary_debug"].startswith(s["summary"]))
+        self.assertNotIn("## 说明", s["summary"])
 
     def test_v34_no_attention_section_when_nothing_to_note(self):
         eng = self.image_ws()
@@ -477,29 +475,29 @@ class T(unittest.TestCase):
         cfg = os.path.join(os.path.dirname(SCRIPT), "combine_config.json")
         c = json.load(open(cfg, encoding="utf-8"))
         self.assertEqual([x["level"] for x in c["riskLadder"]], ["拦截", "建议拦截", "转人工", "通过"])
-        self.assertEqual(c["summaryHeadings"], {"conclusion": "## 结论", "basis": "## 依据", "next": "## 下一步", "note": "## 说明", "attention": "## 注意"})
+        self.assertEqual(c["summaryHeadings"], {"conclusion": "## 结论", "basis": "## 依据", "next": "## 下一步", "attention": "## 注意"})
 
 
-    def test_note_section_counts_and_caveats(self):
+    def test_summary_omits_internal_diagnostics_and_retains_hit_counts(self):
         rules = [mk("R-1", "命中转人工类", "true", "转人工"), mk("R-2", "准入阶段跳过", "skip", "拦截"),
                  mk("R-3", "后续阶段跳过", "skip", "建议拦截", comment="x｜适用阶段：结算"),
                  mk("R-U", "属性缺失未触发", "false", "拦截", reason="A.b 属性不存在"), mk("R-C", "复合", "true", "不足3月拦截，3-6月建议拦截")]
         eng = self.put("e.json", rules)
         rc, out = self.summary(eng, [{"ruleIds": ["R-1"], "text": "命中转人工类规则一条"}], ["补充交付佐证材料"])
         self.assertEqual(rc, 0, out)
-        self.assertNotIn("## 说明", self.final()["summary"])
-        note = self.final()["summary_debug"].split("## 说明\n")[1]
-        self.assertIn("本次共 5 条规则，其中 3 条给出明确结果（命中 2 条、未命中 1 条，其中 1 条因所需属性未取得而未触发、未据此核实），另有 2 条跳过（其中 1 条属后续阶段规则，到该阶段再核验）", note)
-        self.assertIn("共 1 条命中规则进入漏斗，其中该级别 1 条", note)
-        self.assertIn("有 1 条命中规则的处置级别不在漏斗五级内，未计入结论：复合", note)
-        self.assertIn("另有 2 条准入阶段规则因所需属性未取得而未判定或未触发，可能影响结论", note)   # 准入 skip 1 + U 1
-        self.assertEqual([l.split(". ")[0] for l in note.split("\n")], [str(i) for i in range(1, 5)])
+        s = self.final()["summary"]
+        self.assertIn("## 结论\n转人工｜", s)
+        for internal in ("## 说明", "核查完成", "可能影响结论", "riskMeasure", "复合"):
+            self.assertNotIn(internal, s)
+        with open(os.path.join(self.ws, "work", "r1", "hit-rules.json"), encoding="utf-8") as f:
+            counts = json.load(f)["counts"]
+        self.assertEqual((counts["total"], counts["hit"], counts["skip"], counts["missAttrAbsent"]), (5, 2, 2, 1))
 
     def test_blocked_level_has_no_release_caveat(self):
         eng = self.put("e.json", [mk("R-1", "命中拦截类", "true", "拦截"), mk("R-2", "准入阶段跳过", "skip", "拦截")])
         rc, out = self.summary(eng, [{"ruleIds": ["R-1"], "text": "命中拦截类规则一条"}], ["按规则要求改正后重新提交"])
         self.assertEqual(rc, 0, out)
-        self.assertNotIn("可能影响结论", self.final()["summary_debug"])
+        self.assertNotIn("可能影响结论", self.final()["summary"])
 
     # ───── v32：hit-rules.json ─────
 
@@ -530,9 +528,8 @@ class T(unittest.TestCase):
         rc, out = self.run_("summary", "--rid", "r1", stdin=json.dumps({"basis": [{"ruleIds": ["R-HIT"], "text": "企业名称含禁用词，命中拦截规则"}],
                                                                          "next": ["更换不含禁用词的企业名称后重新提交"]}, ensure_ascii=False))
         self.assertEqual(rc, 0, out)
-        dbg = self.final()["summary_debug"]
-        self.assertIn("本次共 5 条规则，其中 4 条给出明确结果（命中 2 条、未命中 2 条，其中 1 条因所需属性未取得而未触发、未据此核实），另有 1 条跳过（其中 1 条属后续阶段规则，到该阶段再核验）", dbg)
-        self.assertIn("有 1 条命中规则的处置级别不在漏斗五级内，未计入结论：复合写法", dbg)
+        self.assertIn("## 结论\n拦截｜", self.final()["summary"])
+        self.assertNotIn("## 说明", self.final()["summary"])
         # 未命中的规则 ID 仍不能写进依据文字（allRuleIds 只供脚本校验）
         rc, out = self.run_("summary", "--rid", "r1", stdin=json.dumps({"basis": [{"ruleIds": ["R-HIT"], "text": "命中拦截，参见 R-MISS 规则"}],
                                                                          "next": ["更换不含禁用词的企业名称后重新提交"]}, ensure_ascii=False))
@@ -577,10 +574,23 @@ class T(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         line = next(l for l in out.splitlines() if l.startswith("FINAL "))
         final = json.loads(line[len("FINAL "):])
-        self.assertEqual(sorted(final), ["input", "notes", "summary", "summary_debug"])
+        self.assertEqual(sorted(final), ["input", "notes", "summary"])
         self.assertEqual(final["input"], {"Employer": {"employer_id": "1"}})
         self.assertIn("「有截止日且已到期」", final["notes"]["unresolvedProperties"][0])
         self.assertNotIn("“", line)
+        self.assertEqual(final, json.load(open(os.path.join(w, "final-output.json"), encoding="utf-8")))
+        self.assertEqual(final["summary"], self.final()["summary"])
+        with open(os.path.join(os.path.dirname(HERE), "references", "结构化输出schema_v28.json"), encoding="utf-8") as f:
+            schema = json.load(f)
+        self.assertEqual(set(schema["required"]), set(final))
+        self.assertNotIn("summary_debug", schema["properties"])
+        # 全部跳过时也须覆盖旧产物，只输出同样的三个字段。
+        eng = self.put("skip.json", [mk("R-SKIP", "未判断", "skip", "拦截")])
+        rc, out = self.run_("summary", "--rid", "r1", "--file", eng)
+        self.assertEqual(rc, 0, out)
+        final = json.loads(next(l[len("FINAL "):] for l in out.splitlines() if l.startswith("FINAL ")))
+        self.assertEqual(set(final), set(schema["required"]))
+        self.assertEqual(final["summary"], self.final()["summary"])
         self.assertEqual(final, json.load(open(os.path.join(w, "final-output.json"), encoding="utf-8")))
 
     def test_v37_attention_drops_repeats_of_registry_checks_and_bracket_only_diffs(self):
