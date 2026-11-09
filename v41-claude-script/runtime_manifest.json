@@ -1,11 +1,11 @@
 {
   "contract": "admission-noshell-v0-1",
   "revision": "0.1",
-  "runtime_characters": 44328,
+  "runtime_characters": 45218,
   "files": [
     {
       "path": "主提示词_v0-1_编排版.md",
-      "sha256": "8030da70a69d6c971c749098868a4ce5b3ce5c0896a7eb4e4e58fafbd73ab35a"
+      "sha256": "28cbff155eb501c1cd4dd36a9bfd0e9313e9d1b25543f0ba920e9d83ffb61627"
     },
     {
       "path": "skills/admission-v0-1-business/SKILL.md",
@@ -13,15 +13,15 @@
     },
     {
       "path": "skills/admission-v0-1-catalog/SKILL.md",
-      "sha256": "487c95b2f6ef7989f6123961deef0fed10c945f04efc50a6611da6f3e7fbebfd"
+      "sha256": "71c56159dbfa84f5c20d8817487f04b21e4ffb62068a464c44472f847c453920"
     },
     {
       "path": "skills/admission-v0-1-discover/SKILL.md",
-      "sha256": "4efc6071ef9204b532fbc742c3338cd1d1f26c99c1f69c22c0b0f76623767375"
+      "sha256": "2971a6f5a73b087dbb5becd8f19576b5b09927869d5982a2a1e3882933a18f0b"
     },
     {
       "path": "skills/admission-v0-1-facts/SKILL.md",
-      "sha256": "30b02e3c22e66f7f64cc800ee70936fdde335f9401d6e4423f2957176cf5ece2"
+      "sha256": "bcdd1d25ecdeb2d1909c11d5efefd2ba8f9dca39df349f4ed33467e6bf4ec0e3"
     },
     {
       "path": "skills/admission-v0-1-materials/SKILL.md",
@@ -29,7 +29,7 @@
     },
     {
       "path": "skills/admission-v0-1-output/SKILL.md",
-      "sha256": "36521962e182ed4232c8f39b4498e1ca7c9dd7973297784122dc8f5a39386eeb"
+      "sha256": "b549bc0fe7a5081a445e06eb6656550ed64de22b96779e7cc362d34ba0b26beb"
     },
     {
       "path": "skills/admission-v0-1-video/SKILL.md",

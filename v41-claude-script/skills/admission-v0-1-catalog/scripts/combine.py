@@ -1384,7 +1384,7 @@ def cmd_plan(a):
                 if miss:
                     print("  ENUM_RULE_MISMATCH 规则条件比较的编码 %s 不在 enum 里，选 enum 编码后这条规则也不会命中，记入 toolIssues" % "、".join(miss))
     if enum_keys:
-        print("ENUM_KEYS %d 个规则引用的枚举键：%s。每个都是选择题：逐项估计各选项与证据相符的把握，最高一项超过 50%% 就用 set 提交该选项（有 enum 交编码），并在依据里写「选项｜置信度约N%%｜理由」；都不超过 50%% 才 skip R10。" % (len(enum_keys), "、".join(enum_keys)))
+        print("ENUM_KEYS %d 个规则引用的枚举键：%s。每个都是选择题：逐项估计各选项与证据相符的把握，最高一项超过 50%% 就用 set 提交该选项（有 enum 交 enum 元素的 key，如 [{\"pass\":\"通过\"}] 交 pass），并在依据里写「选项｜置信度约N%%｜理由」；都不超过 50%% 就留空：value 为 null、skip R10、不传。" % (len(enum_keys), "、".join(enum_keys)))
     inst = ct.inst_keys(rules)
     if inst:
         print("INST_KEYS 机构风控规则（inst-rc-rule-mcp）引用 %d 个键：%s。本体定义里没有也照传：按 label 含义用 map 映到清单条目（一般是请求原文），对不上就 skip。" % (len(inst), "、".join(inst)))
