@@ -53,16 +53,16 @@ SUPPLEMENT_PREFIX = [(("增值税专用发票",), ["vatTaxCertUrl"], "增值税�
                      (("上下游合同",), ["upstreamDnstreamAgmtUrl"], "上下游合同"),
                      (("社保证明", "完税证明", "无欠税证明"), ["noTaxCertSbUrl"], "社保/完税/无欠税证明")]   # 三类证明是同一个请求参数
 ONLINE_PREFIX = "官网/公众号"                                  # 官网类条目：名称含「可打开」「关联」各一条
+# v42：名称比较、是否在期间内、距到期天数、同栏原样带出 不再按编号写死，改由清单条目的 derive 字段声明（见 DERIVE_OPS）
 # v35：脚本里仍按编号引用的条目（A–G、J 组），用名称关键词核对；清单改了编号/名称导致对不上时 init 打印 WARN，而不是悄悄写错行
 ANCHORS = {
     "A01": "entpId", "A02": "entpName", "A03": "rqId", "A04": "hrInstId", "A05": "requestId", "A06": "基准日",
     "A07": "交付要求", "A08": "项目内容", "A09": "项目简介", "A10": "开票类目", "A11": "官网", "A12": "附件盘点", "A13": "岗位名称",
     "B01": "名称", "B02": "类型", "B03": "信用代码", "B04": "成立日期", "B05": "营业期限", "B06": "法定代表人", "B07": "地址",
-    "B08": "经营范围", "B10": "注册资本", "B11": "有效期", "B15": "一致", "B16": "成立月数", "B17": "主体类型", "B18": "分公司",
-    "B19": "合伙", "B22": "快到期",
-    "B24": "成立日期", "B25": "营业期限", "B26": "灵工平台",
-    "C02": "姓名", "D01": "户名", "D02": "账户性质", "D04": "一致", "D08": "法定代表人",
-    "F01": "张数", "G02": "承租方", "G04": "开始时间", "G05": "租期内", "G07": "快到期", "G10": "结束时间",
+    "B08": "经营范围", "B10": "注册资本", "B11": "有效期", "B16": "成立月数", "B17": "主体类型", "B18": "分公司",
+    "B19": "合伙", "B26": "灵工平台",
+    "C02": "姓名", "D01": "户名", "D02": "账户性质", "D08": "法定代表人",
+    "F01": "张数", "G02": "承租方",
     "J01": "企业名称", "J02": "信用代码", "J03": "组织机构代码", "J04": "注册号", "J05": "登记状态", "J06": "企业类型",
     "J07": "法定代表人", "J08": "注册资本", "J09": "成立日期", "J10": "经营期限", "J11": "核准日期", "J12": "登记机关",
     "J13": "注册地址", "J14": "经营地址", "J15": "区域", "J16": "经营范围", "J17": "行业", "J18": "曾用名", "J19": "吊销",
@@ -82,6 +82,92 @@ def check_anchors(items):
         elif kw.lower() not in byid[k]["name"].lower():
             bad.append("%s 现名「%s」不含「%s」" % (k, byid[k]["name"], kw))
     return bad
+
+
+# ───────────────────────── 清单声明的派生（v42） ─────────────────────────
+# 清单条目可带 "derive": {"op": <工具名>, "from": [依据条目ID, ...], 其它参数}；
+# 脚本只按声明执行通用计算，比什么、阈值多少都写在清单里，新增同类条目不用改脚本。
+#   same_name       from=[A, B]          A、B 两个名称逐字比较（忽略空白、括号全半角）；可选 ignoreSuffix=[...] 先去掉 A 末尾的这些字样
+#   in_period       from=[开始, 结束]     基准日是否落在 [开始, 结束]；可选 label（写进依据，如「租期」）
+#   days_to_expiry  from=[截止]           截止日距基准日的天数是否 ≤ withinDays（必填）；“长期/永久”→ false；已过期不派生，留给模型
+#   copy            from=[源]             与源条目同一栏位，原样带出
+DERIVE_OPS = {"same_name": 2, "in_period": 2, "days_to_expiry": 1, "copy": 1}
+DERIVE_ID_RE = r"[A-Z][A-Z0-9-]*"
+
+
+def check_derive_specs(items):
+    """清单里 derive 声明的问题列表（空 = 正常）。声明写错时 init 直接失败，不悄悄跳过。"""
+    ids = {i["id"] for i in items}
+    bad = []
+    for it in items:
+        d = it.get("derive")
+        if d is None:
+            continue
+        i = it["id"]
+        if not isinstance(d, dict) or d.get("op") not in DERIVE_OPS:
+            bad.append("%s 的 derive.op 须为 %s 之一" % (i, "/".join(DERIVE_OPS)))
+            continue
+        src = d.get("from")
+        if not (isinstance(src, list) and len(src) == DERIVE_OPS[d["op"]] and all(isinstance(x, str) for x in src)):
+            bad.append("%s 的 derive.from 须为 %d 个条目 ID" % (i, DERIVE_OPS[d["op"]]))
+            continue
+        for x in src:
+            if x not in ids:
+                bad.append("%s 的 derive.from 引用了不存在的条目 %s" % (i, x))
+            elif x == i:
+                bad.append("%s 的 derive.from 不能引用自己" % i)
+            elif not re.fullmatch(DERIVE_ID_RE, x):
+                bad.append("%s 的 derive.from 条目 ID「%s」格式不支持" % (i, x))
+        if d["op"] == "days_to_expiry" and not (isinstance(d.get("withinDays"), int) and d["withinDays"] > 0):
+            bad.append("%s 的 days_to_expiry 须给正整数 withinDays（阈值天数）" % i)
+        if "ignoreSuffix" in d and not (isinstance(d["ignoreSuffix"], list) and all(isinstance(x, str) and x for x in d["ignoreSuffix"])):
+            bad.append("%s 的 derive.ignoreSuffix 须为非空字符串列表" % i)
+    return bad
+
+
+def short_name(item):
+    return item["name"].rsplit(".", 1)[-1]
+
+
+def run_derive_spec(i, d, need, Y, base, by):
+    """执行一条清单声明的派生。依据未就绪时不动；依据为 N 时 need() 已写 N R12。"""
+    op, src = d["op"], d["from"]
+    if op in ("in_period", "days_to_expiry") and not base:
+        return
+    t = need(i, *src)
+    if not t:
+        return
+    if op == "same_name":
+        a, b = s(t[0]), s(t[1])
+        cut = next((x for x in sorted(d.get("ignoreSuffix") or [], key=len, reverse=True) if nfkc_name(a).endswith(nfkc_name(x))), None)
+        left = nfkc_name(a)[:-len(nfkc_name(cut))] if cut else nfkc_name(a)
+        same = left == nfkc_name(b)
+        Y(i, "true" if same else "false", "派生:%s,%s｜%s=%s；%s=%s；%s%s" % (
+            src[0], src[1], src[0], a, src[1], b, ("去掉末尾「%s」后" % cut) if cut else "",
+            "逐字一致（仅忽略空白和括号全半角）" if same else "不一致"))
+    elif op == "in_period":
+        s0, e0 = parse_date(t[0]), parse_date(t[1])
+        if s0 and e0:
+            label = d.get("label") or "期间"
+            inside = s0 <= base <= e0
+            Y(i, "true" if inside else "false", "派生:%s,%s,A06｜%s %s 至 %s；基准日 %s%s%s内" % (
+                src[0], src[1], label, s0.isoformat(), e0.isoformat(), base.isoformat(), "在" if inside else "不在", label))
+    elif op == "days_to_expiry":
+        n, label = d["withinDays"], d.get("label") or "截止"
+        if any(w in s(t[0]) for w in ("长期", "永久")):
+            Y(i, "false", "派生:%s,A06｜%s为「%s」，无截止日，不存在 %d 天内到期情形" % (src[0], short_name(by[src[0]]), t[0], n))
+            return
+        ds = dates_in(s(t[0]))
+        if ds and ds[-1] >= base:
+            days = (ds[-1] - base).days
+            Y(i, "true" if days <= n else "false", "派生:%s,A06｜%s %s；基准日 %s；距到期 %d 天；阈值 %d 天" % (
+                src[0], label, ds[-1].isoformat(), base.isoformat(), days, n))
+    elif op == "copy":
+        Y(i, t[0], "派生:%s｜与 %s 同一栏位，原样带出：%s" % (src[0], src[0], t[0]))
+
+
+def derive_specs(items):
+    return {it["id"]: it["derive"] for it in items if it.get("derive")}
 
 
 def supplement_ids(items, prefixes):
@@ -524,6 +610,9 @@ def cmd_init(a):
     items = load_items()
     for msg in check_anchors(items):
         print("WARN 清单与脚本按编号引用的条目对不上：%s。脚本里的编号需要同步调整，否则该行可能被写错" % msg)
+    bad = check_derive_specs(items)
+    if bad:
+        die("清单 derive 声明有误（extract-items-checked.json）：" + "；".join(bad))
     row = {i["id"]: {"id": i["id"], "name": i["name"], "desc": i["desc"], "value": None, "source": ""} for i in items}
     order = [i["id"] for i in items]
     pre, issues = set(), []
@@ -721,7 +810,7 @@ PAIRS = [
 ]
 J34_PAIRS = 7
 OUTCOME_LABEL = {"corrected": "更正", "confirmed_diff": "确认不一致", "unstable": "两次识别不一致", "unreadable": "无法确认"}
-DERIVE_DEP_RE = re.compile(r"^Y｜派生:([A-Z0-9,]+)｜")
+DERIVE_DEP_RE = re.compile(r"^Y｜派生:([A-Z0-9,-]+)｜")
 
 
 def same_fact(kind, orig, biz):
@@ -949,7 +1038,7 @@ def derive(doc, st):
         if t:
             Y("B19", "true" if "合伙" in t[0] else "false", "派生:B02｜B02=%s，%s「合伙」字样" % (t[0], "含" if "合伙" in t[0] else "不含"))
     # 营业期限：有效期、快到期
-    if base and (pending("B11") or pending("B22")):
+    if base and pending("B11"):
         t = need("B11", "B05", "B04") if pending("B11") else None
         if t:
             long_term = any(w in t[0] for w in ("长期", "永久"))
@@ -961,43 +1050,14 @@ def derive(doc, st):
                 end = ds[-1]
                 Y("B11", "true" if end >= base else "false", "派生:B05,A06｜营业期限截止 %s；基准日 %s；%s" % (
                     end.isoformat(), base.isoformat(), "未届满" if end >= base else "已届满"))
-        t = need("B22", "B05") if pending("B22") else None
-        if t:
-            if any(w in t[0] for w in ("长期", "永久")):
-                Y("B22", "false", "派生:B05,A06｜营业期限为「%s」，无截止日，不存在 30 天内到期情形" % t[0])
-            else:
-                ds = dates_in(t[0])
-                if ds and ds[-1] >= base:
-                    days = (ds[-1] - base).days
-                    Y("B22", "true" if days <= 30 else "false", "派生:B05,A06｜截止 %s；基准日 %s；距到期 %d 天；阈值 30 天（暂定）" % (ds[-1].isoformat(), base.isoformat(), days))
-    # 租赁合同（v39：清单把「租期起止」拆成 G04 开始时间、G10 结束时间）
-    if base and pending("G05"):
-        t = need("G05", "G04", "G10")
-        if t:
-            s0, e0 = parse_date(t[0]), parse_date(t[1])
-            if s0 and e0:
-                Y("G05", "true" if s0 <= base <= e0 else "false", "派生:G04,G10,A06｜租期 %s 至 %s；基准日 %s%s租期内" % (
-                    s0.isoformat(), e0.isoformat(), base.isoformat(), "在" if s0 <= base <= e0 else "不在"))
-    if base and pending("G07"):
-        t = need("G07", "G10")
-        if t:
-            e0 = parse_date(t[0])
-            if e0 and e0 >= base:
-                days = (e0 - base).days
-                Y("G07", "true" if days <= 30 else "false", "派生:G10,A06｜租期截止 %s；基准日 %s；距到期 %d 天；阈值 30 天（暂定）" % (e0.isoformat(), base.isoformat(), days))
-    # 名称比较
-    for i, a_, b_, la, lb in (("B15", "B01", "A02", "B01", "A02"), ("D04", "D01", "B01", "D01", "B01")):
-        if pending(i):
-            t = need(i, a_, b_)
-            if t:
-                same = nfkc_name(t[0]) == nfkc_name(t[1])
-                Y(i, "true" if same else "false", "派生:%s,%s｜%s=%s；%s=%s；%s" % (a_, b_, la, t[0], lb, t[1], "逐字一致（仅忽略空白和括号全半角）" if same else "不一致"))
-    # v39：清单里 B24/B25 与 B04/B05 同义（成立日期、营业期限），按 B04/B05 原样带出，不让模型重复读
-    for i, src in (("B24", "B04"), ("B25", "B05")):
-        if i in by and pending(i):
-            t = need(i, src)
-            if t:
-                Y(i, t[0], "派生:%s｜与 %s 同一栏位，原样带出：%s" % (src, src, t[0]))
+    # v42：清单 derive 声明的通用派生（名称比较、期间、距到期、原样带出）；依次跑到不再有新行，支持派生行之间互相依赖
+    specs = {i: d for i, d in derive_specs(load_items()).items() if i in by}
+    for _ in range(len(specs) + 1):
+        left = [i for i in specs if pending(i)]
+        for i in left:
+            run_derive_spec(i, specs[i], need, Y, base, by)
+        if [i for i in specs if pending(i)] == left:
+            break
     # v39：是否灵工平台企业（B26）：按执照经营范围原文逐词核对 FLEX_PLATFORM_WORDS
     if "B26" in by and pending("B26"):
         t = need("B26", "B08")
@@ -1085,6 +1145,12 @@ def report(rid, doc, st, header=False):
         print("已预填材料状态：" + "；".join("%s=%s" % (k, v[0]) for k, v in doc["materials"].items()))
     if miss_mat:
         print("MATERIALS 待填（fill 的 materials 里给 [状态, 依据]；状态：可读/不可读；依据=原件一个真实栏位原文，PDF 加页码）：" + "、".join(miss_mat))
+    specs = derive_specs(load_items())
+    wait = [x for x in pend if x["id"] in specs]          # v42：清单声明了 derive 的行，依据填好后脚本自动算，不让模型读
+    pend = [x for x in pend if x["id"] not in specs]
+    if wait:
+        print("WAIT %d 行由脚本按清单 derive 声明派生，依据就绪后自动写入（不用 fill）：%s" % (
+            len(wait), "、".join("%s←%s" % (x["id"], ",".join(specs[x["id"]]["from"])) for x in wait)))
     if pend:
         print("PENDING 待填 %d 行（id|name|desc）——读材料后用 fill 提交；取不到写 null + Rxx｜具体原因：" % len(pend))
         for x in pend:

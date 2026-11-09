@@ -20,6 +20,28 @@ def read(name):
     return open(os.path.join(FX, name), encoding="utf-8").read()
 
 
+AUTO_FILL_WHY = "R03｜回归夹具未覆盖此条目（测试自动补齐）"
+
+
+def fill_fixture(ws, runner=None):
+    """按 v25 那次模型的填写记录 fill；清单后来新增、夹具里没有答案的行，再用 null + R03 补一轮。
+    这样清单加条目不会让与它无关的用例失败（夹具只记录那次真实运行，不随清单逐条补）。
+    清单 derive 声明的行由脚本派生，不在待填里，不会被这里补成 null。返回 (rc, 输出)。"""
+    runner = runner or (lambda script, *args, stdin="": run(ws, script, *args, stdin=stdin))
+    rc, out = runner("detail.py", "fill", "--rid", RID, stdin=read("fill_spec.json"))
+    if rc != 0:
+        return rc, out
+    fp = os.path.join(ws, "work", RID, "input-extract-detail.json")
+    with open(os.path.join(os.path.dirname(SCRIPTS), "extract-items-checked.json"), encoding="utf-8") as f:
+        derived = {x["id"] for x in json.load(f) if x.get("derive")}
+    with open(fp, encoding="utf-8") as f:
+        pend = [x["id"] for x in json.load(f)["items"] if x["source"] == "" and x["id"] not in derived]
+    if not pend:
+        return rc, out
+    rc2, out2 = runner("detail.py", "fill", "--rid", RID, stdin=json.dumps({"rows": [[i, None, AUTO_FILL_WHY] for i in pend]}, ensure_ascii=False))
+    return rc2, out + out2
+
+
 class ScriptTests(unittest.TestCase):
     def setUp(self):
         self.ws = tempfile.mkdtemp()
@@ -65,9 +87,10 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         d = self.detail()
         items = {i["id"]: i for i in d["items"]}
-        self.assertEqual(len(items), 163)            # v39：清单删去 I 组与 D03，新增 B24–B26、C13/C14、G09/G10
+        catalog = json.load(open(os.path.join(os.path.dirname(SCRIPTS), "extract-items-checked.json"), encoding="utf-8"))
+        self.assertEqual(list(items), [x["id"] for x in catalog])   # v42：条数和顺序以清单为准，不在测试里写死（清单加条目不改这里）
         pending = [i for i in items if items[i]["source"] == ""]
-        self.assertEqual(len(pending), 85, out)          # 模型只需要读材料填这些（其中 15 行随后由脚本派生；v39 +G09/G10 +B24–B26 −D03）
+        self.assertTrue(pending, out)                    # 还有要模型读材料填的行
         self.assertEqual(items["J33"]["value"], "false")   # 规则关键词表逐词核对
         self.assertEqual(items["A06"]["value"], "2026-11-05")
         self.assertIn("基准日回退", d["notes"]["toolIssues"][0])
@@ -76,13 +99,15 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual(items["C02"]["source"][:6], "N｜R01｜")
         rc, out = run(self.ws, "combine.py", "build", "--rid", RID, "--rules", "rules.json", "--props", "props.json")
         self.assertEqual(rc, 2, out)                      # 还有待填行时拒绝组装
-        rc, out = run(self.ws, "detail.py", "fill", "--rid", RID, stdin=read("fill_spec.json"))
+        rc, out = fill_fixture(self.ws)
         self.assertEqual(rc, 0, out)
         d = self.detail()
         items = {i["id"]: i for i in d["items"]}
         self.assertTrue(all(i["source"] for i in items.values()))
-        ys = sum(1 for i in items.values() if i["source"].startswith("Y｜"))
-        self.assertEqual((ys, 163 - ys), (94, 69))   # v39：B24/B25/B26 由 B04/B05/B08 派生、G10 为原文，D03 删去
+        # v42：夹具里有答案的行（v25 那次真实运行），fill 后与夹具一致；不再断言整张清单的 Y/N 条数
+        for i, v, _ in json.loads(read("fill_spec.json"))["rows"]:
+            self.assertEqual(items[i]["value"], v if v is None or isinstance(v, str) else json.dumps(v, ensure_ascii=False), i)
+        self.assertEqual(items["G12"]["source"], "N｜R12｜缺 G11")    # 清单 derive：G11 夹具里没有 → 补成 null → G12 跟着 R12
         self.assertEqual(items["B16"]["value"], "23")
         self.assertEqual(items["B15"]["value"], "true")
         self.assertEqual(items["J34"]["value"], "无不一致")
@@ -123,7 +148,7 @@ class ScriptTests(unittest.TestCase):
 
     def test_new_rule_keys_are_reported_and_keys_still_close(self):
         self.init()
-        run(self.ws, "detail.py", "fill", "--rid", RID, stdin=read("fill_spec.json"))
+        fill_fixture(self.ws)
         # 规则新增两个引用：一个定义里有、映射表里没有（应报 UNMAPPED）；一个定义里没有（应进 notFoundInDefinition）；键数仍闭合
         with open(os.path.join(self.ws, "rules.json"), encoding="utf-8") as f:
             rules = json.load(f)
@@ -143,7 +168,7 @@ class ScriptTests(unittest.TestCase):
     def test_derived_attribute_needs_value_then_accepts_set(self):
         """多条明细共同推出的属性：先 NEED_VALUE（保持 unfilled），模型用 set 提交后进 entities 和 input。映射由模型按含义提交，不查对照表。"""
         self.init()
-        run(self.ws, "detail.py", "fill", "--rid", RID, stdin=read("fill_spec.json"))
+        fill_fixture(self.ws)
         spec = json.loads(read("map_spec.json"))
         spec["map"]["Employer.has_independent_employment_status"] = ["B17", "B18", "B19"]
         rc, out = self.build(json.dumps(spec, ensure_ascii=False))       # 同一个键既在 map 又在 skip：自相矛盾，直接报错而不是悄悄选一个
@@ -246,7 +271,10 @@ class ScriptTests(unittest.TestCase):
         r = subprocess.run([sys.executable, "-I", os.path.join(cat, "scripts", "detail.py"), "init", "--biz", "biz_D.txt", "biz_B.txt",
                             "biz_T.txt", "--rules", "rules.json"], cwd=self.ws, input=json.dumps(spec, ensure_ascii=False),
                            capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}, timeout=30)
-        d = json.load(open(os.path.join(self.ws, "work", RID, "input-extract-detail.json"), encoding="utf-8"))
+        fp = os.path.join(self.ws, "work", RID, "input-extract-detail.json")
+        if r.returncode != 0 or not os.path.isfile(fp):     # v42：清单 derive 声明有误时 init 直接失败，没有明细
+            return r.stdout + r.stderr, {}
+        d = json.load(open(fp, encoding="utf-8"))
         return r.stdout + r.stderr, {i["id"]: i for i in d["items"]}
 
     def test_v35_supplement_groups_follow_names_not_h_numbers(self):
@@ -278,8 +306,10 @@ class ScriptTests(unittest.TestCase):
             for x in items:
                 if x["id"] == "B05":
                     x["id"] = "B99"
-        out, _ = self._renumbered_catalog(mutate)
+        out, it = self._renumbered_catalog(mutate)
         self.assertIn("B05 在清单里不存在", out)
+        self.assertIn("B22 的 derive.from 引用了不存在的条目 B05", out)   # v42：清单 derive 引用断了 → init 失败，不悄悄留空
+        self.assertEqual(it, {})
 
     def test_v35_current_catalog_matches_all_anchors(self):
         sys.path.insert(0, SCRIPTS)
@@ -290,11 +320,96 @@ class ScriptTests(unittest.TestCase):
         finally:
             sys.path.remove(SCRIPTS)
 
+    # ───── v42：清单 derive 声明的通用派生（加条目不用改脚本，夹具不全也不连锁失败） ─────
+
+    def _flow_with_catalog(self, mutate):
+        """复制 catalog skill、改清单后跑 init → fill（夹具 + 自动补齐）→ finish；返回 (init 输出, fill/finish 输出, 明细 items)。"""
+        cat = os.path.join(self.ws, "cat")
+        shutil.copytree(os.path.dirname(SCRIPTS), cat, ignore=shutil.ignore_patterns("__pycache__", "*.zip"))
+        jp = os.path.join(cat, "extract-items-checked.json")
+        with open(jp, encoding="utf-8") as f:
+            items = json.load(f)
+        mutate(items)
+        with open(jp, "w", encoding="utf-8") as f:
+            json.dump(items, f, ensure_ascii=False)
+
+        def runc(script, *args, stdin=""):
+            r = subprocess.run([sys.executable, "-I", os.path.join(cat, "scripts", script), *args], cwd=self.ws, input=stdin,
+                               capture_output=True, text=True, env={"LANG": "C.UTF-8"}, timeout=30)
+            return r.returncode, r.stdout + r.stderr
+        rc, init_out = runc("detail.py", "init", "--biz", "biz_D.txt", "biz_B.txt", "biz_T.txt", "--rules", "rules.json", stdin=read("init_spec.json"))
+        if rc != 0:
+            return init_out, "", {}
+        derived = {x["id"] for x in items if x.get("derive")}
+        rc, out = runc("detail.py", "fill", "--rid", RID, stdin=read("fill_spec.json"))
+        pend = [x["id"] for x in self.detail()["items"] if x["source"] == "" and x["id"] not in derived]
+        if pend:
+            rc, o2 = runc("detail.py", "fill", "--rid", RID, stdin=json.dumps({"rows": [[i, None, AUTO_FILL_WHY] for i in pend]}, ensure_ascii=False))
+            out += o2
+        rc, o3 = runc("detail.py", "finish", "--rid", RID)
+        return init_out, out + o3, self.items()
+
+    def test_v42_g12_seal_name_is_derived_from_g11(self):
+        """G12 按清单声明 same_name(G11, A02)，忽略末尾「合同专用章」等字样；G11 改了 G12 跟着重算。"""
+        self.ready()
+        rc, out = self.force([["G11", "上海修匀软件开发有限责任公司合同专用章", "租赁合同 leaseAgreementUrl p3 承租方盖章处｜上海修匀软件开发有限责任公司合同专用章"]])
+        self.assertEqual(rc, 0, out)
+        g12 = self.items()["G12"]
+        self.assertEqual(g12["value"], "true", g12)
+        self.assertIn("去掉末尾「合同专用章」后逐字一致", g12["source"])
+        rc, out = self.force([["G11", "上海某某物业管理有限公司", "租赁合同 leaseAgreementUrl p3 承租方盖章处｜上海某某物业管理有限公司"]])
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.items()["G12"]["value"], "false")
+
+    def test_v42_new_catalog_item_with_derive_needs_no_script_change(self):
+        """清单新增一条声明了 derive 的条目、一条普通条目：前者脚本自动派生、不进 PENDING；后者进 PENDING；全流程照常 PASS。"""
+        def mutate(items):
+            pos = next(n for n, x in enumerate(items) if x["id"] == "G12") + 1
+            items.insert(pos, {"id": "G13", "group": "租赁合同", "name": "租赁合同.承租方与企业名称一致", "desc": "",
+                               "derive": {"op": "same_name", "from": ["G02", "A02"]}})
+            items.insert(pos + 1, {"id": "G14", "group": "租赁合同", "name": "租赁合同.出租方名称", "desc": "合同原文"})
+        init_out, out, it = self._flow_with_catalog(mutate)
+        self.assertIn("WAIT", init_out)
+        self.assertIn("G13←G02,A02", init_out)
+        self.assertNotIn("\nG13|", init_out)                        # 派生行不让模型读
+        self.assertIn("\nG14|", init_out)                           # 普通新条目照常列给模型
+        self.assertIn("PASS", out)
+        self.assertTrue(it["G13"]["source"].startswith("Y｜派生:G02,A02｜"), it["G13"])
+        self.assertEqual(it["G14"]["source"], "N｜" + AUTO_FILL_WHY)
+
+    def test_v42_threshold_comes_from_the_catalog(self):
+        """快到期阈值写在清单 withinDays 里：改清单即可，不改脚本。"""
+        def mutate(items):
+            next(x for x in items if x["id"] == "G07")["derive"]["withinDays"] = 100000
+        _, out, it = self._flow_with_catalog(mutate)
+        self.assertIn("PASS", out)
+        self.assertEqual(it["G07"]["value"], "true", it["G07"])
+        self.assertIn("阈值 100000 天", it["G07"]["source"])
+
+    def test_v42_bad_derive_spec_fails_init_loudly(self):
+        def mutate(items):
+            next(x for x in items if x["id"] == "G12")["derive"] = {"op": "fuzzy_match", "from": ["G11", "A02"]}
+            next(x for x in items if x["id"] == "G07")["derive"] = {"op": "days_to_expiry", "from": ["G10"]}
+            next(x for x in items if x["id"] == "B15")["derive"] = {"op": "same_name", "from": ["B01", "Z99"]}
+        init_out, _, it = self._flow_with_catalog(mutate)
+        self.assertEqual(it, {})
+        for want in ("G12 的 derive.op 须为", "G07 的 days_to_expiry 须给正整数 withinDays", "B15 的 derive.from 引用了不存在的条目 Z99"):
+            self.assertIn(want, init_out)
+
+    def test_v42_current_catalog_derive_specs_are_valid(self):
+        sys.path.insert(0, SCRIPTS)
+        try:
+            import importlib
+            dt = importlib.import_module("detail")
+            self.assertEqual(dt.check_derive_specs(dt.load_items()), [])
+        finally:
+            sys.path.remove(SCRIPTS)
+
     # ───── v29：派生行随依据重算；工商与原件识别不一致 → 回看原件二次识别 ─────
 
     def ready(self):
         self.init()
-        rc, out = run(self.ws, "detail.py", "fill", "--rid", RID, stdin=read("fill_spec.json"))
+        rc, out = fill_fixture(self.ws)
         self.assertEqual(rc, 0, out)
         self.assertIn("PASS", out)
 
@@ -717,7 +832,7 @@ class ScriptTests(unittest.TestCase):
             return r.returncode, r.stdout + r.stderr
         rc, out = runc("detail.py", "init", "--biz", "biz_D.txt", "biz_B.txt", "biz_T.txt", "--rules", "rules.json", stdin=read("init_spec.json"))
         self.assertEqual(rc, 0, out)
-        runc("detail.py", "fill", "--rid", RID, stdin=read("fill_spec.json"))
+        fill_fixture(self.ws, runc)
         rc, out = runc("combine.py", "build", "--rid", RID, "--rules", "rules.json", "--props", "props.json", stdin=read("map_spec.json"))
         self.assertEqual(rc, 0, out)
         emp = self.inp(out)["Employer"]
@@ -909,7 +1024,7 @@ class ScriptTests(unittest.TestCase):
         spec["request"].update(extra)
         rc, out = run(self.ws, "detail.py", "init", "--biz", "biz_D.txt", "biz_B.txt", "biz_T.txt", "--rules", "rules.json", stdin=json.dumps(spec, ensure_ascii=False))
         self.assertEqual(rc, 0, out)
-        rc, out = run(self.ws, "detail.py", "fill", "--rid", RID, stdin=read("fill_spec.json"))
+        rc, out = fill_fixture(self.ws)
         self.assertIn("PASS", out)
         return out
 

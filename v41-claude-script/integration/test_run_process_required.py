@@ -37,7 +37,7 @@ class RunProcessRequiredTests(unittest.TestCase):
     def ready_without(self, item, why):
         rc, out = self.run_("detail.py", "init", "--biz", "biz_D.txt", "biz_B.txt", "biz_T.txt", "--rules", "rules.json", stdin=fx.read("init_spec.json"))
         self.assertEqual(rc, 0, out)
-        rc, out = self.run_("detail.py", "fill", "--rid", fx.RID, stdin=fx.read("fill_spec.json"))
+        rc, out = fx.fill_fixture(self.f.ws, self.run_)
         self.assertEqual(rc, 0, out)
         rc, out = self.run_("detail.py", "fill", "--rid", fx.RID, "--force", stdin=json.dumps({"rows": [[item, None, why]]}, ensure_ascii=False))
         self.assertEqual(rc, 0, out)

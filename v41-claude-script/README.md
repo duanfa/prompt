@@ -1,4 +1,19 @@
-## 当前修订：run_process 必填键单独成文件、枚举键兜底（2026-11-09，版本仍为 0.1）
+## 当前修订：派生改为清单声明的通用工具 + 回归夹具按需补齐（2026-11-09，版本仍为 0.1）
+
+起因：清单加了 G12（承租方的章是否与企业名称一致）后 59 项回归失败——58 项是 G12 没有夹具答案、整张清单门禁卡住后续所有步骤，1 项是测试写死了 163 条。
+
+- **清单 `derive` 声明**（`extract-items-checked.json` 条目可选字段）：`{"op": 工具名, "from": [依据条目ID…], 其它参数}`。`detail.py` 只执行通用计算，比什么、阈值多少写在清单里：
+  - `same_name`（两名称逐字比较，忽略空白/括号全半角；可选 `ignoreSuffix` 先去掉左侧末尾字样）、`in_period`（基准日是否在 [开始, 结束]，可选 `label`）、`days_to_expiry`（距到期天数 ≤ `withinDays`，必填；长期/永久 → false；已过期不派生）、`copy`（同栏原样带出）。
+  - 原先写死在脚本里的 B15、D04、B22、G05、G07、B24、B25 改为清单声明（输出文字不变，只去掉“阈值 30 天（暂定）”里的“暂定”）；对应编号从 `ANCHORS` 移除。新增 **G12 = same_name(G11, A02)**，忽略「合同专用章/财务专用章/业务专用章/专用章/公章」后缀。
+  - init 校验声明（未知 op、引用不存在的条目、缺 `withinDays` 等）→ 直接报错退出，不悄悄留空。声明了 derive 的待算行打印为 `WAIT G12←G11,A02`，不再列进给模型的 PENDING。派生行之间可互相依赖（循环到不再有新行）。`DERIVE_DEP_RE` 支持 `H1-15` 这类带连字符的编号。
+  - **未改**：B11、B16–B19、B26、J32–J36 等仍是脚本内逻辑（含业务口径，见 Codex 评审第 1、4 条）；D04 仍比 D01 对 B01（清单名已改为“企业名称”，如需改比 A02 只改清单 `from`）。
+- **回归夹具按需补齐**：`integration/test_scripts.py` 新增 `fill_fixture()`——先按 v25 夹具 fill，清单后来新增、夹具里没有答案且非 derive 的行再用 `null + R03` 补一轮；全部 9 处调用改用它。删去夹具里手工补的 G11 行。全流程用例不再写死 163 条 / 94 Y，改为条目与清单一致、夹具覆盖的行值一致。
+- 新增 5 项测试：G12 随 G11 派生与重算、清单新增 derive 条目与普通条目无需改脚本且全流程 PASS、阈值来自清单、声明写错时 init 报错、当前清单声明有效。全量 **135 项通过**。
+- facts / materials SKILL.md、主提示词第 74 行同步；facts / materials `SKILL.md.zip` 重打包；`runtime_manifest.json` 重算（runtime 44 162 → 44 328）。catalog `Archive.zip` 未重打包。
+
+---
+
+## 历史修订：run_process 必填键单独成文件、枚举键兜底（2026-11-09，版本仍为 0.1）
 
 - 新增 `skills/admission-v0-1-catalog/scripts/run_process_required.json`：
   - `required`：调 `mcp_run_process` 必带的 6 个预设键（`Employer.employer_id`、`Employer.enterprise_name`、`Demand.demand_id`、`LaborAgency.agency_id`、`Agency.agency_id`、`Employer.usage_scenario`），每项写 `key`、取值条目 `item`、`soft`、`why`。**不设兜底**：请求没值就不传，只在 `notes.toolIssues` 记“必填键 X … 无值，未传给 mcp_run_process”，build 照常通过。取代 `combine_config.json` 的 `fixedItems` / `fixedIdentifiers` / `softPresets`（已删除；新文件缺失时 `combine_tool.py` 仍读旧字段）。本体改名只改这个文件。

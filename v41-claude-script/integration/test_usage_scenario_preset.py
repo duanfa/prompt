@@ -90,7 +90,7 @@ class UsageScenarioPresetTests(unittest.TestCase):
         rc, out = fx.run(self.f.ws, "detail.py", "init", "--biz", "biz_D.txt", "biz_B.txt", "biz_T.txt",
                          "--rules", "rules.json", stdin=json.dumps(spec, ensure_ascii=False))
         self.assertEqual(rc, 0, out)
-        rc, out = fx.run(self.f.ws, "detail.py", "fill", "--rid", fx.RID, stdin=fx.read("fill_spec.json"))
+        rc, out = fx.fill_fixture(self.f.ws)
         self.assertEqual(rc, 0, out)
         out, inp = self.ok(BASE)
         self.assertNotIn("usage_scenario", inp.get("Employer", {}))             # 请求没值不传，交给 RULE-GATE-003 按“为空”处理

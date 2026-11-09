@@ -378,11 +378,6 @@
       "H33",
       null,
       "R03｜noTaxCertSbUrl 与 vatTaxCertUrl 中未见无欠税证明，无法读取伪造嫌疑"
-    ],
-    [
-      "G11",
-      null,
-      "R03｜历史回归夹具未提供承租方章内容"
     ]
   ],
   "notes": {
