@@ -1114,6 +1114,59 @@ def enum_check(key, pd, value, rules):
     return value, "取值「%s」不在 comment 列出的选项里，不传；可选：%s" % (short(v, 30), enum_text(opts))
 
 
+def general_industry_fallback(ents, defs, ref, rows, entries, skipmap, sets, rules):
+    """只补遗漏：沿用本轮两个一致的一般行业分类及其证据，不重新判断业务。"""
+    cfg = ct.CONFIG.get("generalIndustryFallback") or {}
+    target, sources, label = cfg.get("target"), cfg.get("sources"), cfg.get("label")
+    if not target or not sources or not label or target not in ref:
+        return []
+    if target in entries or target in skipmap or target in sets:
+        return []
+
+    def definition(key):
+        obj, prop = key.split(".")
+        return next((pd for pd in defs.get(obj, {}).get("properties", []) if pd["name"] == prop), None)
+
+    def general_value(pd):
+        src, opts = enum_options(pd)
+        for code, text in opts:
+            if text == label or code == label:
+                return code if src == "enum" else text
+        return None
+
+    pd = definition(target)
+    value = general_value(pd)
+    if value is None:
+        return []
+    value, bad = type_fix(target, pd, value, rules)
+    if bad:
+        return []
+    value, bad = enum_check(target, pd, value, rules)
+    if bad:
+        return []
+    ids = []
+    for key in sources:
+        obj, prop = key.split(".")
+        data = ents.get(obj, {}).get("props", {}).get(prop)
+        expected = general_value(definition(key))
+        if data is None or expected is None or data["value"] != expected or not data["extractIds"]:
+            return []
+        for item in data["extractIds"]:
+            row = rows.get(item)
+            if not row or not row["source"].startswith("Y｜") or row["value"] is None:
+                return []
+            if item not in ids:
+                ids.append(item)
+    obj, prop = target.split(".")
+    e = ents.setdefault(obj, {"label": defs[obj].get("label"), "comment": defs[obj].get("comment"), "props": {}})
+    e["props"][prop] = {
+        "value": value,
+        "value_source": "派生:%s｜一般行业兜底：%s 均已按本次定义确认为%s，沿用其业务证据" % (",".join(ids), "、".join(sources), label),
+        "label": pd["label"], "comment": pd.get("comment"), "extractIds": ids, "rules": ref[target],
+    }
+    return [target]
+
+
 def key_uses(key, rules):
     """规则条件里该键每次出现的（前文, 后文）片段。"""
     pat = re.compile(r"(?<![\w.])" + re.escape(key) + r"(?!\w)")
@@ -1275,6 +1328,12 @@ def inst_def(k, ref):
             "comment": "机构风控规则（inst-rc-rule-mcp）引用，本体定义未返回；条件：%s" % "；".join(r["condition"] for r in ref.get(k, []))}
 
 
+def empty_gates(key, rules):
+    """条件里含「键 IS EMPTY / IS NULL」（不含 NOT）的规则：该键不传就会命中。"""
+    pat = re.compile(re.escape(key) + r"\s+IS\s+(?:EMPTY|NULL)\b", re.I)
+    return [r for r in rules if pat.search(r.get("condition") or "")]
+
+
 def cmd_plan(a):
     """只读：列出本次规则引用的属性（含定义的 label/comment）和清单条目，供你按语义决定「哪个条目 → 哪个属性」。
     映射不是对照表：属性名随本体随时会变，只看本次定义返回的 label/comment 与条目 name/desc 的含义。"""
@@ -1308,6 +1367,8 @@ def cmd_plan(a):
                 dp[p] = inst_def(k, ref)
             r0 = (ref.get(k) or [{}])[0].get("condition", "")
             print("%s｜%s｜%s｜%d｜%s%s" % (k, dp[p].get("label") or "", short(dp[p].get("comment"), 60), len(ref.get(k, [])), short(r0, 70), tag))
+            for g in empty_gates(k, rules):
+                print("  EMPTY_GATE %s（%s，处置 %s）在该键为空时命中：skip 会直接触发这条规则。有可读证据就按含义提交值（枚举按选择题选一项），确实无依据才 skip，并在依据/下一步里说明缺什么" % (g["ruleId"], g.get("label") or "", (g.get("riskMeasure") or "").strip() or "未写"))
             src, opts = enum_options(dp[p])
             if src:
                 enum_keys.append(k)
@@ -1474,6 +1535,16 @@ def build(rid, rules, props, sets, spec_in):
         e = ents.setdefault(o, {"label": defs[o].get("label"), "comment": defs[o].get("comment"), "props": {}})
         e["props"][p] = {"value": value, "value_source": vsrc, "label": pd["label"], "comment": pd.get("comment"),
                          "extractIds": ids, "rules": ref.get(k, [])}
+    for k in general_industry_fallback(ents, defs, ref, rows, entries, skipmap, sets, rules):
+        o, p = k.split(".")
+        unfilled[o]["R10"].remove(p)
+        if not unfilled[o]["R10"]:
+            del unfilled[o]["R10"]
+        if not unfilled[o]:
+            del unfilled[o]
+        undecided = [(key, label) for key, label in undecided if key != k]
+        notes_unfilled = [item for item in notes_unfilled if item[0] != k]
+        print("GENERAL_INDUSTRY_FALLBACK %s｜所属行业和实际业务均已确认为一般行业，沿用证据补齐用工场景" % k)
     for k in list(mp["map"]) + [k for ks in mp["skip"].values() for k in ks]:
         if k not in order_keys:
             ignored.append(k)            # 既不是规则引用的键、也不是标识：不进 input

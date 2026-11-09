@@ -22,6 +22,8 @@ metadata:
 
 脚本都由 RunSkillScript 运行（只用标准库）。`RunSkillScript` 报路径不存在 / 没有这个工具时按主提示词第六节“技能配置异常”处理，不得改为手写明细。
 
+**一般行业补漏例外**：业务分类仍由模型按本次定义判断；所属行业和实际业务均已有一般行业取值及可读依据、却遗漏用工场景时，build 按 `generalIndustryFallback` 配置沿用这些证据补齐目标，打印 `GENERAL_INDUSTRY_FALLBACK`。显式 map/skip/set、特殊类别、未知、冲突及无定义/未被规则引用的目标均不补；具体分类口径见 facts skill“一般行业兜底”。
+
 ## 二、明细条目格式（文件由 `detail.py` 写，路径 `work/<requestId>/input-extract-detail.json`）
 
 清单全部条目的顺序、齐全、五字段由脚本保证。你提交 `[id, value, text]`，脚本按下面的规则校验（不符会 REJECT）：

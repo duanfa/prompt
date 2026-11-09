@@ -560,6 +560,20 @@ class ScriptTests(unittest.TestCase):
         emp["properties"].append({"name": "acct_kind", "label": "账户类型", "comment": "枚举 AcctKind：基本户、一般户、其他账户"})
         json.dump(props, open(pp, "w", encoding="utf-8"), ensure_ascii=False)
 
+    def test_v01_empty_gate_hint_for_enum_key(self):
+        """v0.1：v01-2 有 54 单因用工场景 skip 被“为空即拦截”规则命中；plan 对该键打印 EMPTY_GATE。"""
+        self.ready()
+        self.enum_ws()
+        rp = os.path.join(self.ws, "rules.json")
+        rules = json.load(open(rp, encoding="utf-8"))
+        rules["data"].append({"ruleId": "RULE-GATE-X", "label": "租期状态为空", "comment": "x", "condition": "Employer.lease_status IS EMPTY", "riskMeasure": "拦截"})
+        json.dump(rules, open(rp, "w", encoding="utf-8"), ensure_ascii=False)
+        rc, out = run(self.ws, "combine.py", "plan", "--rid", RID, "--rules", "rules.json", "--props", "props.json")
+        self.assertIn("EMPTY_GATE RULE-GATE-X（租期状态为空，处置 拦截）在该键为空时命中", out)
+        line = next(l for l in out.splitlines() if "EMPTY_GATE RULE-GATE-X" in l)
+        self.assertNotIn("acct_kind", line)
+        self.assertEqual(out.count("EMPTY_GATE RULE-GATE-X"), 1)
+
     def test_v41_enum_value_must_be_an_option(self):
         """v41：没有 enum 时从 comment 选项里选；布尔、原文整句不是选项，不传。"""
         self.ready()

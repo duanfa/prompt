@@ -1,5 +1,11 @@
 {
- "_说明": "本体组装与校验配置。规则、属性定义每次重新获取；业务属性不设默认映射、分类词表或派生公式，由模型按当次 label/comment、规则条件和材料证据提交 map/skip/set。仅保留用户约定的 fixedIdentifiers。",
+  "_说明": "本体组装与校验配置。规则、属性定义每次重新获取；业务判断由模型按当次 label/comment、规则条件和材料证据提交 map/skip/set。保留用户约定的 fixedIdentifiers，以及已有一致分类证据时补齐遗漏用工场景的 generalIndustryFallback。",
+  "generalIndustryFallback": {
+    "target": "Employer.usage_scenario",
+    "sources": ["Request.industry_category", "Request.actual_business_category"],
+    "label": "一般行业"
+  },
+  "_generalIndustryFallback说明": "只补齐尚未 map/skip/set 的规则引用目标；两个来源均已通过本次定义的枚举校验、确认为一般行业且全部依据可读时，沿用证据填写用工场景。目标编码取本次 enum，没有 enum 则用 comment 的中文选项。不覆盖显式决定、不将未知或特殊类别改成一般行业；键名变更只改本配置。",
  "fixedItems": [
   "A01",
   "A02",

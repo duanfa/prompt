@@ -1,3 +1,32 @@
+## 当前修订：一般行业兜底（2026-11-09，版本仍为 0.1）
+
+依据 trace `d6ca22bf3aa15455fedd581b4a9f3536`（205 号）：所属行业和实际业务均已按软件开发判断为一般行业，但用工场景漏映射，触发空值拦截。
+
+- 主提示词、facts / discover skill：业务内容可辨识、未命中金融/传销/违法/高危/同业/敏感/音视频制作，且一般行业置信度过半时，显式提交一般行业及证据；不因申报人没有逐字填写分类而 skip。未知、冲突和仅有违法类规则未命中不兜底。
+- `combine.py build`：两个来源已按本次定义确认为一般行业且证据齐全、却遗漏用工场景时，沿用证据补齐，打印 `GENERAL_INDUSTRY_FALLBACK`；保留 extractIds 和派生来源，清除该遗漏项的 UNDECIDED / unfilled / unresolvedProperties。三个属性各按自身 enum 转码，不猜英文编码，不覆盖显式 map/skip/set。
+- 配置在 `combine_config.json.generalIndustryFallback`；仅修改实际部署目录 `prompt/v41-claude-script`，历史 docs 版本保留。
+- 新增 11 项集成测试，含七种特殊类别等子用例；全量 **129 项通过**。catalog / facts / discover 三个 `SKILL.md.zip` 已更新，`runtime_manifest.json` 已重算（runtime 44 217，script 170 205）。
+
+详细边界见 [一般行业兜底说明](references/general-industry-fallback.md)。本次未部署、未重新提交远端任务；空值规则的处置级别保持原配置。
+
+---
+
+## 历史修订：v01-2 测试问题修复——用工场景缺值拦截、95 号工具名死循环（2026-11-09，版本仍为 0.1）
+
+依据：v39-1 / v01-2 对比（`demos/ontology_case/analysis/v39-1_vs_v01-2/`）。
+
+| 问题 | 根因 | 改动 |
+|---|---|---|
+| v01-2 有 54 单因 RULE-GATE-003（`Employer.usage_scenario IS EMPTY`，处置拦截）被拦截 | `usage_scenario` 定义是 comment 枚举（金融类…一般行业），facts skill 第 8 条“行业/业务分类无口径不填”与红线 5“枚举当选择题”冲突，模型多数按第 8 条 skip R10（44 号 notes 原文：“usage_scenario｜R10｜无业务判断口径”） | facts 第 8 条把“定义自带选项的枚举”排除在外，新增“枚举选项即口径”；红线 5、discover R10 同步；`combine.py plan` 对被 `键 IS EMPTY/IS NULL` 规则引用的键打印 `EMPTY_GATE`（规则、处置），提醒 skip 会直接命中 |
+| 95 号 UPSTREAM_TASK_FAILED | trace `4ea31437…`：本体规则查询写成简称 `mcp_list_rule`（实际 `mcp__ontology-mcp__mcp_list_rule`），之后 10 次 `reset_tools`↔`mcp_list_rule` 交替直到失败 | 主提示词一.3、discover 第 1 条：按工具列表完整名称调用；名字错了改完整名重发一次；不调 `reset_tools`；仍不存在按“技能配置异常”收尾 |
+| 6 条规则“无法解析”（RULE-ADM-026、DOC-024/026/027/028、INST-007） | 服务端规则含 `IS NOT NULL`，引擎不支持 | agent 侧无法改；改写建议见 `demos/ontology_case/analysis/v39-1_vs_v01-2/规则语法修复建议.md`，需在规则库修改 |
+| 测试 | — | 新增 1 条 `EMPTY_GATE` 用例，共 118 项通过 |
+| 版本 | — | 七个 `SKILL.md.zip` 重打包；`runtime_manifest.json` 重算（runtime 42 321 → 42 909，script 166 753 → 167 226） |
+
+**需留意**：①用工场景选了中文选项（如“一般行业”）后，RULE-GATE-003 不再命中，但 RULE-IND-006（`= sensitive`）、RULE-IND-007（`= av_production`）按英文编码比较，传中文选项仍不会命中；需要本体给 `usage_scenario` 加 `enum`（编码↔中文），或规则改按中文选项比较。②EMPTY_GATE 只是提示，是否填值仍由模型按证据判断。③未重跑，需用 v01-2 的 63 单回归确认拦截数回落。
+
+---
+
 ## 当前修订：RunSkillScript 参数塞成一项的防呆（2026-11-08）
 
 需求（用户）：trace `7bd54b0ab98c829ccfb8a69d0722ae10` 的 `REPLY_FAILED`（phase=tool，RunSkillScript）。根因：模型把 `init --rid … --biz a,b,c --rules x,y` 连同数百个换行塞进 `args` 的一项，`detail.py` 在 argparse 阶段退出（exit 2，`invalid choice`）。另一个潜在错误：`init` 本来不收 `--rid`，就算拆对了也会报 `unrecognized arguments`。网关（WanScope）不改，防呆全部放在本目录。
