@@ -84,8 +84,19 @@ def load_rules(paths):
 
 
 def inst_keys(rules):
-    """机构规则引用的 对象.属性：本体定义里没有也照传（引擎按机构规则取值）。"""
+    """机构规则引用的必填 对象.属性：与本体规则合并组装，本体定义没有也要传。"""
     return list(dict.fromkeys(k for r in rules if r.get("source") == "inst" for k in cond_keys(r["condition"])))
+
+
+def missing_inst_keys(rules, inp):
+    """机构规则的输入依赖不能以 skip / 定义未返回代替；false 和 0 是有效值。"""
+    missing = []
+    for key in inst_keys(rules):
+        obj, prop = key.split(".")
+        value = inp.get(obj, {}).get(prop)
+        if value is None or (isinstance(value, str) and not value.strip()) or value == [] or value == {}:
+            missing.append(key)
+    return missing
 
 
 def rule_index(rules):
@@ -329,6 +340,8 @@ def cmd_validate(a):
         dropped = {d.get("ruleId") for d in cb.get("rulesDropped") or []}      # v39：与准入无关、组装前已抛掉的规则不参与闭合
         rules = [r for r in load_rules(a.rules) if r.get("ruleId") not in dropped]
         ref = rule_index(rules)
+        for key in missing_inst_keys(rules, cb["input"]):
+            errs.append("INST_REQUIRED_MISSING %s：机构自定义规则引用的必填属性未进入 input；按本次规则含义映射有证据的清单条目，不能以 skip 或定义未返回代替" % key)
         # unfilled / notFoundInDefinition 卫生检查（v25）：N = M + L + K，每个键恰好一个去向
         refkeys = set(k for r in rules for k in cond_keys(r["condition"]))
         if rkset and rkset != refkeys:

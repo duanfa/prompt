@@ -101,7 +101,7 @@ class UsageScenarioPresetTests(unittest.TestCase):
         self.write("s-rules.json", self.rules)
         self.write("inst.json", inst)
         return fx.run(self.f.ws, "combine.py", "build", "--rid", fx.RID, "--rules", "s-rules.json", "inst.json",
-                      "--props", "s-props.json", stdin=json.dumps(BASE))
+                      "--props", "s-props.json", stdin=json.dumps({"map": dict(BASE["map"], **{"Project.project_name": ["A08"]})}))
 
     def test_rule_list_code_200_is_success_but_other_codes_still_fail(self):
         self.f.ready()

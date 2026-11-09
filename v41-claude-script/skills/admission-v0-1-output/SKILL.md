@@ -13,11 +13,11 @@ metadata:
 
 v37 起不再有审核 A / 审核 B 的独立轮次。能机械核对的都在脚本里：
 
-- `combine.py build`：validate（JSON、标识、键数闭合、value_source、清单条目齐全）+ `CHECK` 行（“是否有伪造嫌疑”类条目的依据含“真实/合规/正常/可信/无异常”断言、E05 的值不是 true/false）+ `COMPARE_SUMMARY`（工商与原件比对，“待复核”须为 0）。
+- `combine.py build`：validate（JSON、标识、键数闭合、value_source、清单条目齐全、机构自定义规则引用的必填属性均进入 input）+ `CHECK` 行（“是否有伪造嫌疑”类条目的依据含“真实/合规/正常/可信/无异常”断言、E05 的值不是 true/false）+ `COMPARE_SUMMARY`（工商与原件比对，“待复核”须为 0）。
 - `detail.py fill`：伪造嫌疑类条目写入时自动去掉含断言的分句（`TRIMMED`）；工商与原件不一致时要求 `recheck`。
 - `combine.py summary`：结论、覆盖、条数、「」引文出自提交资料、不含规则 ID/英文属性名。
 
-build 输出 `validate: OK` 且没有 `CHECK`、`ERR` 行，就直接进入第二节。有 `CHECK`：用 `detail.py fill --rid <id> --force` 改写被点名的行（只写逐项看了什么），再跑一次 build。
+build 输出 `validate: OK` 且没有 `CHECK`、`ERR`、`INST_REQUIRED_MISSING` 行，就直接进入第二节。有 `CHECK`：用 `detail.py fill --rid <id> --force` 改写被点名的行（只写逐项看了什么），再跑一次 build。有 `INST_REQUIRED_MISSING`：按本次机构规则含义补齐有证据的 map/set 后重跑；来源确实缺失时在 toolIssues 记缺失键和原因，summary 写“审核未完成：机构自定义规则所需资料不足。”，不调用 mcp_run_process，不编造值。
 
 写明细时自己守住这几条（脚本看不出）：材料来源的值要有原件栏位原文；视频“场所虚构/真实”只在视频回答有明确物理造假证据和时间点时才填；影像合格、成立月数、名称比较等派生由脚本算，不手改；“不一致”只说材料和工商各是什么，不写成伪造/虚构。
 
@@ -29,7 +29,7 @@ build 通过后，用**最近一次 `combine.py build` 输出的 `INPUT` 行**�
 {"request":{"requestId":"<网关原值>","domain":"<网关原值>","scene":"<网关原值>","businessKey":"<entpId字符串>","input":{}}}
 ```
 
-事实少、工商失败、部分定义缺失、大量 skip 都不是跳过引擎的理由。
+通过 build 门禁后，事实少、工商失败、部分定义缺失、大量 skip 都不是跳过引擎的理由。机构规则必填输入缺失仍受第一节门禁约束。
 
 - 正常只调一次。大量 skip、“属性/对象不存在”、规则命中都**不重调、不补造值**。
 - 仅调用报错/非成功码、明确指出名称或枚举错误、明确日期格式错误时，可用 `fill --force` 修明细并重跑 build 后最多再调一次。第二次仍失败，toolIssues 写工具名、实际错误和简短原因，照常提交失败状态说明。

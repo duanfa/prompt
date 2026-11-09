@@ -25,6 +25,8 @@ metadata:
 
 **用工场景预设**：`Employer.usage_scenario` 必填，和机构 ID 一样由 build 从请求 `projCont`（A08 项目内容）原文自动传入（`run_process_required.json`），不做枚举转码，你不映射、不分类、不 set；提交了也只打印 `PRESET_OVERRIDE_IGNORED` 并忽略。请求没有 projCont 时不传。
 
+**机构规则输入必填**：inst-list-rc-rules 返回的 model 表达式与 mcp_list_rule 的 condition 一起交给 plan/build/validate。参与审核的机构规则引用属性必须出现在 input-combine.json 的 refKeys、entities 和 input 中，并保留引用规则原文及条目证据；定义未返回也照传。属性仍按本次含义 map/set，不新增固定业务属性表。缺项时脚本报 `INST_REQUIRED_MISSING`、不输出可调用的 INPUT；unfilled 或 notFoundInDefinition 不能代替这些必填输入。
+
 ## 二、明细条目格式（文件由 `detail.py` 写，路径 `work/<requestId>/input-extract-detail.json`）
 
 清单全部条目的顺序、齐全、五字段由脚本保证。你提交 `[id, value, text]`，脚本按下面的规则校验（不符会 REJECT）：

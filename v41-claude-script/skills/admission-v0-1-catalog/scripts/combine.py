@@ -1452,7 +1452,7 @@ def cmd_plan(a):
         print("ENUM_KEYS %d 个规则引用的枚举键：%s。每个都是选择题：逐项估计各选项与证据相符的把握，最高一项超过 50%% 就用 set 提交该选项（有 enum 交 enum 元素的 key，如 [{\"pass\":\"通过\"}] 交 pass），并在依据里写「选项｜置信度约N%%｜理由」；都不超过 50%% 就留空：value 为 null、skip R10、不传。" % (len(enum_keys), "、".join(enum_keys)))
     inst = ct.inst_keys(rules)
     if inst:
-        print("INST_KEYS 机构风控规则（inst-rc-rule-mcp）引用 %d 个键：%s。本体定义里没有也照传：按 label 含义用 map 映到清单条目（一般是请求原文），对不上就 skip。" % (len(inst), "、".join(inst)))
+        print("INST_KEYS 机构风控规则（inst-rc-rule-mcp）引用 %d 个键：%s。这些是调用 mcp_run_process 的必填输入，与 mcp_list_rule 引用键一起组装。本体定义里没有也要按规则含义用 map 映到有证据的清单条目；缺项时 build/validate 报 INST_REQUIRED_MISSING，不得调用引擎，不得编造值。" % (len(inst), "、".join(inst)))
         undefined = [k for k in undefined if k not in inst]
     if undefined:
         print("-- 规则引用但本次定义没有（自动记 notFoundInDefinition，不用处理）：%s" % "、".join(undefined))
@@ -1770,6 +1770,11 @@ def cmd_build(a):
             print("- %s｜%s" % (k, why))
     if ignored:
         print("IGNORED %d 个你提交的键不是规则引用的键也不是标识，不进 input：%s" % (len(ignored), ",".join(ignored[:20])))
+    missing_inst = ct.missing_inst_keys(rules, cb["input"])
+    if missing_inst:
+        print("INST_REQUIRED_MISSING 机构自定义规则的必填输入尚未齐全：%s。补齐有证据的 map/set 后重新 build；来源确实缺失则按审核未完成处理，不调用 mcp_run_process。" % "、".join(missing_inst))
+        print("NOTES " + json.dumps(no_curly(notes), ensure_ascii=False, separators=(",", ":")))
+        sys.exit(1)
     print("INPUT " + json.dumps(cb["input"], ensure_ascii=False, separators=(",", ":")))
     print("NOTES " + json.dumps(no_curly(notes), ensure_ascii=False, separators=(",", ":")))
     sys.exit(1 if checks or any(ln.startswith("ERR") for ln in lines) else 0)

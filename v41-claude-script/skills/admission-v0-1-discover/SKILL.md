@@ -11,12 +11,12 @@ metadata:
 
 1. 工具名按平台工具列表里的完整名称调用（如 `mcp__ontology-mcp__mcp_list_rule`；本文的 mcp_list_rule 等是简称），名字错了改完整名重发一次，不调用 `reset_tools`。原样使用网关 requestId/domain/scene 调 mcp_list_rule；有分页/更多标记则取完。规则返回后，下一轮再调 mcp_list_property，`input` 传 `{}`（不带 `name`，一次取回全部对象，不按规则推对象清单，也不补查）；两者**不在同一轮并行发出**（实测并行时都返回 BIZ_FAIL“domain 不能为空”）。没有真实返回不得造规则。**同一轮（和 mcp_list_rule 一起）调 inst-rc-rule-mcp 的机构规则查询**，入参只传请求的机构 ID `hrInstId` 原值；返回形如 `{"model":[{"companyName":"Employer.employer_name CONTAINS [修匀]"},{"projectName":"Project.project_name CONTAINS [修匀]"}]}`，每一项是一条机构风控规则（名称：条件）。返回的 `item_count` 应等于 `combine.py props` 打印的“共 N 个对象”。
 2. 规则、定义都是落盘文件，返回里只有元数据，**看不到正文是正常的**：把 `path` 交给脚本（`--rules` 后面同时写 mcp_list_rule 与机构规则两个 path，脚本合并，机构规则编号为 `INST-<名称>`），不要 Read/Grep/Write 它们，不要凭空猜对象或属性名；要看内容用 `combine.py rules --rules <路径> [--grep 词]` / `combine.py props --props <路径> [--obj 对象]`。
-3. **规则引用键清单由 `combine.py build` 自动提取**（全部 condition，含嵌套 AND/OR/NOT；字面值、关键字、比较值不当属性），后面 input、notes 都以它为准；要核对用 `combine.py rules` 看每条规则的引用键。规则引用而定义里没有的对象/属性由脚本记入 notFoundInDefinition，不用处理；**机构规则引用的键例外**：plan 打印 `INST_KEYS`，定义里没有也要按 label 含义 map 到清单条目后传给 mcp_run_process。
-4. **允许进入 input 的键 = 与客户准入有关的规则引用键 ∩ 当次定义返回 + 四个预设标识**。规则范围由你按当次含义判断，明确无关的用 rules.drop 提交原因；脚本不按历史属性表或阶段词自行排除规则，未明确排除则保留。定义有但规则未引用的字段只作证据。
+3. **规则引用键清单由 `combine.py build` 合并两种规则后自动提取**（mcp_list_rule 的 condition + inst-list-rc-rules 的 model 表达式，含嵌套 AND/OR/NOT；字面值、关键词、比较值不当属性）。机构自定义规则与 mcp_list_rule 一样提供规则输入依赖，不能只用于关键词提示；例如 `companyName: Employer.employer_name CONTAINS [使用的应用]` 引用的必填输入是 Employer.employer_name，方括号中是匹配常量。要核对用 `combine.py rules` 看每条规则的引用键。
+4. **允许进入 input 的键 = 与客户准入有关的本体规则引用键 ∩ 当次定义返回 + 机构规则引用键 + 预设键（四个标识、用工场景）**。参与本次审核的机构规则引用键是调用 mcp_run_process 的必填属性；plan 打印 `INST_KEYS`，即使定义没有返回该对象/属性，也必须按规则名称及表达式含义 map 到有证据的清单条目，写入 input-combine.json 的 entities/input，不得记为 notFoundInDefinition 后继续。缺项时 build/validate 报 `INST_REQUIRED_MISSING`；先补映射，来源确实缺失时保留真实原因并按审核未完成处理，不调用引擎，不编造值。规则范围仍由你按当次含义判断，明确无关的用 rules.drop 提交原因；未明确排除则保留。定义有但规则未引用的字段只作证据。
 5. **映射（红线 10）由你按本次含义决定**：先用 `combine.py plan` 查看所有规则引用键的 label/comment、规则条件和清单事实；同义原文用 map，需业务判断或枚举选项时用 map 列依据并以 set 提交值和证据（枚举按红线 5 当选择题：有 enum 交所选元素的 key，最高置信度超过 50% 才选，否则留空 null、skip R10），对不上或依据不足则 skip。脚本没有业务属性默认表。属性名和清单编号随时可能变化，不按旧名、标签关键词或固定编号套值；综合属性须查看相关反证，不能只取有利条目。
 6. **skip 原因码怎么选**（一个键只占一个码，冲突时 R11 > R14 > R13 > R10；拿不准时：像结果类的默认 R14，需业务判断的默认 R10，明显依赖外部来源的默认 R13）：
    - **R14 结果类**：含义为审核结论、处置、风险等级、是否放行/通过/复核、汇总信号，永远不填。
-   - **R13 外部来源**：本次请求、材料、工商都不可能提供的（结算、个人、资金流水、代发、充值、阶段门、复核记录、规则变更、机构自定义规则、名单命中、三方违法/舆情核查、历史结论）。
+   - **R13 外部来源**：本次请求、材料、工商都不可能提供的（结算、个人、资金流水、代发、充值、阶段门、复核记录、规则变更、机构自定义规则的命中结果、名单命中、三方违法/舆情核查、历史结论）。已获取的机构规则表达式所引用的企业名称、项目内容等原文输入不属于此类，必须按真实来源填写。
    - **R10 无口径**：需业务判断、名单或实际核查，而对应清单条目的 desc 或 facts skill“属性填写原则”没给口径的，**默认不填**；分类不明按此，不凭后缀猜。定义自带选项（`enum` 或 comment「枚举 X：」）的枚举键不算“无口径”，按红线 5 当选择题选，选不出过半项才 R10。
    - **R11 定义与规则用法冲突**：属性定义的含义与规则条件里的用法对不上——不传，不硬塞编码或中文名，记 toolIssues。先用 `combine.py rules --grep` 核对原始 condition，是自己看错就直接纠正，不记工具问题。
 7. **用工场景不用你判断**：`Employer.usage_scenario` 已预设取项目内容 projCont 原文（见下文“标识”）。所属行业、实际业务类别等其他分类键仍按 facts skill“一般行业兜底”判断。
