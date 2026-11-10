@@ -1,3 +1,11 @@
+## 当前修订：业务分类改为纯语义判断，去掉全部硬性规则（2026-11-11，版本仍为 0.1）
+
+- **category skill 重写**：去掉固定“违法 > 擦边灰产 > 传销 > 金融 > 高危 > 私域微商 > 一般”的决策顺序、各选项的字面判定要点、反例清单与用工场景/经营范围对照表；改为读懂人员实际从事的业务（做什么、经手什么、怎么计酬、在哪作业），再对照本次定义各选项含义单选，几项沾边时选最能概括业务实质的一项并写明取舍。示例只说明思路，含“原文不含选项名但实质属于该类”“提到该词但只是开发/限制用途”两类。
+- **脚本去掉词表门禁**：删除 `combine_config.json` 的 `categorySignals` 词表、`combine.py` 的 `category_hits`/`category_gate`/否定句正则和 `CHECK CATEGORY_SIGNAL` 阻断、stdin 的 `categoryReview` 键。`CATEGORY_TASK` 任务卡保留，只展示原文、各选项对应的规则和提交模板，不打印“线索”；业务分类键改为按选项数（≥4，或用工场景预设键）识别，不再靠词表匹配中文名。
+- facts skill“业务类别单选/一般类选项”、discover 第 7 条、主提示词红线 10 同步：不按字词匹配、不设类别优先顺序；一般类也要正面理由，不能因没出现敏感词就选。
+- 测试：`CategorySignalGateTests` 改为 `SemanticCategoryTests`（模型按语义选的值照传、不按字词阻断、原文无选项名也可选特殊类、`categoryReview` 已退役）；全量 197 项通过。
+- category / facts / discover `SKILL.md.zip`、catalog `Archive.zip` 重打包（不含 `__MACOSX`）并与源码逐文件核对；`runtime_manifest.json` 重算（runtime 54,861 → 53,448，script 204,087 → 200,414）。**仅本地验证，未部署、未重跑远端模型。**
+
 ## 当前修订：stdin 错误码覆盖全部子命令、NEED_VALUE 口径统一、枚举只认原值（2026-11-10，版本仍为 0.1）
 
 - **stdin 解析统一到 `scripts/stdin_json.py`**：此前本目录 `detail.py` 实际并未实现下面描述的 `STDIN_ROWS_CLOSED`/`STDIN_JSON_INVALID`（测试先行、代码未跟上），`combine.py build`/`summary` 解析失败也只有一句旧报错。现在 detail.py init/fill/recheck/verify 与 combine.py build/summary 共用：合法 JSON 原样接收；同层重名键、顶层不是对象按语法失败计；只修 fill 的 rows 少 `]` 这一种；其他一律 `STDIN_JSON_INVALID <步骤>`（带“同一步骤连续第 N 次”）。计数落盘 `work/<rid>/.stdin-failures.json`，按步骤分开，解析成功清零。连续第二次：fill/recheck/verify/init/build 打印 `STDIN_GIVE_UP`，按主提示词第六节「stdin 语法错误的有限恢复」收尾、不调用引擎；summary 打印 `WARN STDIN_LENIENT`，由脚本生成依据/下一步并照常出 FINAL。契约外的顶层键只打印 `WARN STDIN_UNKNOWN_KEY` 并忽略（不新增拒绝）。

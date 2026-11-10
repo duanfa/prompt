@@ -98,20 +98,18 @@ class BusinessCategoryTests(unittest.TestCase):
         self.assertFalse(any(self.prop in s for s in notes["unresolvedProperties"]))
 
     def test_multiple_categories_are_not_sent_to_engine(self):
-        """多选/拼接值不进 input；有人数计酬线索而分类被丢掉时，v43 门禁阻断调用引擎。"""
+        """多选/拼接值不进 input；脚本不按字词补拦截，只丢弃非法值。"""
         for value in ([self.code, "multi_level_distribution"],
                       self.code + ",multi_level_distribution", "拉人头返利、多级分销"):
             with self.subTest(value=value):
                 rc, out = self.build(self.selection(value))
-                self.assertNotEqual(rc, 0, out)
                 self.assertIn("ENUM_DROPPED", out)
-                self.assertIn("CHECK CATEGORY_SIGNAL", out)
+                self.assertNotIn("CATEGORY_SIGNAL", out)
                 self.assertNotIn(self.prop, self.f.inp(out).get(self.obj, {}))
 
     def test_explicit_selection_replaces_previous_r10_skip(self):
         rc, out = self.build({"skip": {"R10": [self.key]}})
-        self.assertNotEqual(rc, 0, out)
-        self.assertIn("CHECK CATEGORY_SIGNAL", out)
+        self.assertNotIn("CATEGORY_SIGNAL", out)
         self.assertNotIn(self.prop, self.f.inp(out).get(self.obj, {}))
         rc, out = self.build(self.selection(self.code))
         self.assertEqual(rc, 0, out)
@@ -122,7 +120,6 @@ class BusinessCategoryTests(unittest.TestCase):
     def test_single_project_evidence_does_not_bypass_enum_validation(self):
         spec = {"map": {self.key: ["A08"]}, "set": {self.key: [[self.code, "multi_level_distribution"], "派生:A08｜请求中有人数计酬和多层返利特征"]}}
         rc, out = self.build(spec)
-        self.assertNotEqual(rc, 0, out)
         self.assertIn("ENUM_DROPPED", out)
         self.assertNotIn(self.prop, self.f.inp(out).get(self.obj, {}))
         spec["set"][self.key][0] = self.code
@@ -171,8 +168,8 @@ USER_CASES = [   # 用户反馈未拦截的原文（2026-11-09）
 ]
 
 
-class CategorySignalGateTests(unittest.TestCase):
-    """v43：项目内容/交付要求出现特殊业务线索，而分类未传、选一般业务时，build 阻断；脚本只提示，不替模型定值。"""
+class SemanticCategoryTests(unittest.TestCase):
+    """分类完全由模型按语义判断：脚本不做词表扫描、不按字词阻断，只校验单选编码、打印任务卡。"""
 
     def setUp(self):
         self.f = fx.ScriptTests()
@@ -207,28 +204,37 @@ class CategorySignalGateTests(unittest.TestCase):
     def pick(self, code):
         return {"set": {self.key: [code, "派生:A08,A07｜%s｜置信度约90%%｜机制见项目内容" % code]}}
 
-    def test_every_category_signal_blocks_skip_and_general(self):
-        for code, label, text in CATEGORY_CASES + [(c, c, t) for c, t in USER_CASES]:
-            with self.subTest(code=code, text=text):
+    def test_model_choice_is_passed_without_word_gate(self):
+        """原文含某类字词，模型按语义选了别的选项（含一般业务）：脚本照单传入，不阻断。"""
+        for code, _, text in CATEGORY_CASES[:4] + [(c, c, t) for c, t in USER_CASES]:
+            with self.subTest(code=code):
                 self.project(text)
-                rc, out = self.run_("build", {"skip": {"R10": [self.key]}})
-                self.assertNotEqual(rc, 0, out)
-                self.assertIn("CHECK CATEGORY_SIGNAL", out)
-                self.assertIn(code + "=", out.split("CHECK CATEGORY_SIGNAL", 1)[1].split("\n", 1)[0])
-                rc, out = self.run_("build", self.pick("general"))
-                self.assertNotEqual(rc, 0, out)
-                self.assertIn("CHECK CATEGORY_SIGNAL", out)
-                rc, out = self.run_("build", self.pick(code))
-                self.assertEqual(rc, 0, out)
-                self.assertNotIn("CATEGORY_SIGNAL", out)
-                self.assertEqual(self.f.inp(out)["Request"]["actual_business_category"], code)
+                for chosen in (code, "general"):
+                    rc, out = self.run_("build", self.pick(chosen))
+                    self.assertEqual(rc, 0, out)
+                    self.assertNotIn("CATEGORY_SIGNAL", out)
+                    self.assertEqual(self.f.inp(out)["Request"]["actual_business_category"], chosen)
 
-    def test_plan_prints_task_card_with_rules_and_clues(self):
+    def test_semantic_case_without_option_words(self):
+        """原文不含任何选项名，模型按语义判为拉人头返利：照传。"""
+        self.project("组建推广团队，新成员的加入带来上级奖励，团队越大收入越高。")
+        rc, out = self.run_("build", self.pick("headcount_rebate"))
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.f.inp(out)["Request"]["actual_business_category"], "headcount_rebate")
+
+    def test_skip_is_not_blocked_by_words(self):
+        self.project(BUSINESS)
+        rc, out = self.run_("build", {"skip": {"R10": [self.key]}})
+        self.assertNotIn("CATEGORY_SIGNAL", out)
+        self.assertNotIn("actual_business_category", self.f.inp(out).get("Request", {}))
+
+    def test_plan_prints_task_card_without_clues(self):
         self.project(BUSINESS)
         rc, out = self.run_("plan")
         self.assertIn("CATEGORY_TASK " + self.key, out)
-        self.assertIn("headcount_rebate=拉人头返利←", out)
+        self.assertIn("依据语义判断", out)
         self.assertIn("RULE-IND-002(拦截)", out)
+        self.assertNotIn("线索", out.split("CATEGORY_TASK", 1)[1])
 
     def test_set_without_map_reaches_engine_input(self):
         """trace 173：只交 set 的分类曾被静默记 R10。"""
@@ -240,32 +246,10 @@ class CategorySignalGateTests(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertEqual(self.f.inp(out)["Request"]["actual_business_category"], "headcount_rebate")
 
-    def test_other_special_option_is_the_models_call(self):
+    def test_category_review_key_is_retired(self):
         self.project(BUSINESS)
-        rc, out = self.run_("build", self.pick("multi_level_distribution"))
-        self.assertEqual(rc, 0, out)
-        self.assertNotIn("CATEGORY_SIGNAL", out)
-
-    def test_negated_and_general_text_do_not_block(self):
-        for text in ("内部管理系统开发调试，交付测试报告。", "开发客服工单系统，不涉及催收业务，严禁赌博内容。"):
-            with self.subTest(text=text):
-                self.project(text)
-                rc, out = self.run_("build", self.pick("general"))
-                self.assertEqual(rc, 0, out)
-                self.assertNotIn("CATEGORY_SIGNAL", out)
-
-    def test_false_positive_needs_written_review(self):
-        self.project("为银行开发理财产品管理系统的后台软件，交付源代码。")
-        rc, out = self.run_("build", self.pick("general"))
+        rc, out = self.run_("build", {"categoryReview": {self.key: "项目是软件开发，不销售理财产品，理由足够长"}})
         self.assertNotEqual(rc, 0, out)
-        self.assertIn("CHECK CATEGORY_SIGNAL", out)
-        rc, out = self.run_("build", {"categoryReview": {self.key: "太短"}})
-        self.assertNotEqual(rc, 0, out)
-        rc, out = self.run_("build", {"categoryReview": {self.key: "项目是为银行开发「理财产品管理系统的后台软件」，人员从事软件开发，不销售理财产品"}})
-        self.assertEqual(rc, 0, out)
-        self.assertEqual(self.f.inp(out)["Request"]["actual_business_category"], "general")
-        notes = json.loads(out.split("NOTES ", 1)[1].split("\n", 1)[0])
-        self.assertTrue(any("分类线索复核" in t for t in notes["toolIssues"]))
 
 
 class RestrictedJobReminderTests(unittest.TestCase):

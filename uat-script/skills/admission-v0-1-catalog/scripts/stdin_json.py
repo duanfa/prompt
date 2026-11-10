@@ -25,7 +25,7 @@ TOP_KEYS = {
     "fill": {"materials", "rows", "notes"},
     "recheck": {"rows"},
     "verify": {"rows"},
-    "build": {"map", "skip", "set", "fixedUnmapped", "toolIssues", "rules", "categoryReview"},
+    "build": {"map", "skip", "set", "fixedUnmapped", "toolIssues", "rules"},
     "summary": {"basis", "next", "notice", "analysis"},
     "init": None,
 }

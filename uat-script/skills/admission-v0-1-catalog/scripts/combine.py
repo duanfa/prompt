@@ -1316,7 +1316,6 @@ FIX_ITEMS = ct.FIXED_ITEMS            # 请求里的预设条目 A01–A04 + A08
 MAP_FILE = "key-map.json"
 PRESET_UNDEFINED = []                 # 本次属性定义里没有、仍按预设照传的标识键（只打印，不进 notes）
 FALLBACK_FILLED = []                  # 本次按 run_process_required.json 兜底传入的枚举键 (键, 值)
-CATEGORY_CHECKS = []                  # v43：业务线索门禁未通过的分类键 (键, 说明)
 
 
 def set_cited(vsrc):
@@ -1384,44 +1383,22 @@ def sync_sets(mp, sets, spec_in, entries, skipmap, rows, classified_presets):
     return {k: rec["v"] for k, rec in saved.items()}
 
 
-# ---- v43：业务类别线索（召回门禁）。词表在 combine_config.json 的 categorySignals，按选项中文名匹配，不绑定编码 ----
-NEG_BEFORE = re.compile(r"(不|无|非|未|禁止|严禁|不得|不涉及|不含|不从事|杜绝)[^，,。；;]{0,4}$")
+# ---- 业务分类任务卡：只展示原文和各选项对应的规则，分类由模型按语义判断；脚本不做词表匹配、不按字词拦截 ----
+CATEGORY_SOURCES = ("A08", "A07", "A09", "A13")    # 项目内容、交付要求、项目简介、岗位名称
+CATEGORY_MIN_OPTIONS = 4                           # 选项不少于 4 个的枚举键视为业务分类题（是/否、通过/不通过类不算）
 
 
-def category_options(pd):
-    """枚举键的选项 → (编码或中文, 中文, 线索词)。至少 2 个选项能对上词表才算业务分类键，否则返回 []。"""
-    cfg = ct.CONFIG.get("categorySignals") or {}
+def category_options(pd, preset=False):
+    """业务分类枚举键的选项 → [(编码或中文, 中文)]；不是业务分类键返回 []。"""
     src, opts = enum_options(pd)
-    if not src or not cfg:
+    if not src or (len(opts) < CATEGORY_MIN_OPTIONS and not preset):
         return []
-    table = [(a.split("|"), words) for a, words in (cfg.get("labels") or {}).items()]
-    out, n = [], 0
-    for c, l in opts:
-        name = (l or c or "").strip()
-        words = next((w for names, w in table if name in names), None)
-        n += words is not None
-        out.append((c if src == "enum" else name, name, words or []))
-    return out if n >= 2 else []
+    return [(c if src == "enum" else (l or ""), (l or c or "").strip()) for c, l in opts]
 
 
 def category_text(rows):
-    cfg = ct.CONFIG.get("categorySignals") or {}
-    return [(i, rows[i]["name"], rows[i]["value"]) for i in cfg.get("sources", []) if i in rows
+    return [(i, rows[i]["name"], rows[i]["value"]) for i in CATEGORY_SOURCES if i in rows
             and rows[i]["source"].startswith("Y｜") and isinstance(rows[i]["value"], str) and rows[i]["value"].strip()]
-
-
-def category_hits(opts, texts):
-    """{选项值: [命中的线索词]}；线索词前几个字有否定（不/无/禁止…）的不算。"""
-    hits = {}
-    for code, name, words in opts:
-        for w in words:
-            for _, _, t in texts:
-                pos = [m.start() for m in re.finditer(re.escape(w), t)]
-                if any(not NEG_BEFORE.search(t[max(0, i - 8):i]) for i in pos):
-                    hits.setdefault(code, [])
-                    if w not in hits[code]:
-                        hits[code].append(w)
-    return hits
 
 
 def option_rules(key, code, rules):
@@ -1436,54 +1413,27 @@ def option_rules(key, code, rules):
     return out
 
 
-def category_card(key, pd, rules, rows):
-    """plan/build 打印的分类任务卡：原文、线索、各选项对应的规则、提交模板。不是业务分类键返回 []。"""
-    opts = category_options(pd)
+def category_card(key, pd, rules, rows, preset=False):
+    """plan 打印的分类任务卡：原文、各选项对应的规则、提交模板。不是业务分类键返回 []。"""
+    opts = category_options(pd, preset)
     if not opts:
         return []
     texts = category_text(rows)
-    hits = category_hits(opts, texts)
-    lines = ["CATEGORY_TASK %s｜%s：业务分类单选，按 category skill 的四步判定（先写机制，再按决策顺序选）" % (key, pd.get("label") or "")]
+    lines = ["CATEGORY_TASK %s｜%s：业务分类单选，按 category skill 依据语义判断（读懂业务实质再对照选项含义，不按字词匹配）" % (key, pd.get("label") or "")]
     for i, n, v in texts:
         lines.append("  原文 %s %s：%s" % (i, n, short(v, 160)))
     if not texts:
-        lines.append("  原文：项目内容、交付要求等均无值（不兜底一般业务，skip R01/R10 写明缺口）")
+        lines.append("  原文：项目内容、交付要求等均无值（不兜底一般类，skip R01/R10 写明缺口）")
     risky = []
-    for code, name, _ in opts:
+    for code, name in opts:
         rs = option_rules(key, code, rules)
         if rs:
             risky.append("%s=%s→%s" % (code, name, ",".join("%s(%s)" % (r["ruleId"], r.get("riskMeasure") or "") for r in rs[:2])))
     if risky:
-        lines.append("  会触发规则的选项：%s" % "；".join(risky))
-    if hits:
-        lines.append("  线索（脚本按词表找到，只提示不定值）：%s" % "；".join(
-            "%s=%s←%s" % (c, next(n for cc, n, _ in opts if cc == c), "、".join("「%s」" % w for w in ws[:4])) for c, ws in hits.items()))
-        lines.append("  有线索时不能传一般类、不能 skip；确认线索是误报（如反诈宣传、金融软件开发）才在 stdin 写 \"categoryReview\":{\"%s\":\"理由，引用原文用「」\"}" % key)
+        lines.append("  各选项对应的规则（只说明后果，不影响按语义选择）：%s" % "；".join(risky))
     ids = ",".join(i for i, _, _ in texts) or "A08,A07"
-    lines.append("  提交（只交 set 即可，不用另写 map；set 会落盘）：\"set\":{\"%s\":[\"<选项编码>\",\"派生:%s｜<选项中文>｜置信度约N%%｜机制：<做什么/卖什么/怎么计酬/在哪作业>\"]}" % (key, ids))
+    lines.append("  提交（只交 set 即可，不用另写 map；set 会落盘）：\"set\":{\"%s\":[\"<选项编码>\",\"派生:%s｜<选项中文>｜置信度约N%%｜机制：<做什么/经手什么/怎么计酬/在哪作业>\"]}" % (key, ids))
     return lines
-
-
-def category_gate(key, pd, rules, rows, value, review):
-    """build 门禁：有线索的分类键，值缺失、选了一般类、或选了不触发任何规则的项而线索项会触发规则 → 返回阻断说明；
-    有 categoryReview 理由则返回「REVIEWED …」记入 toolIssues。没有线索或不是分类键返回 None。"""
-    opts = category_options(pd)
-    if not opts:
-        return None
-    hits = category_hits(opts, category_text(rows))
-    if not hits or (value is not None and str(value) in hits):
-        return None
-    names = {c: n for c, n, _ in opts}
-    hit_risky = [c for c in hits if option_rules(key, c, rules)]
-    v = None if value is None else str(value)
-    general = v is not None and "一般" in names.get(v, v)
-    if v is not None and not general and (option_rules(key, v, rules) or not hit_risky):
-        return None                      # 选了另一个特殊类别：模型的判断，放行
-    clue = "；".join("%s=%s←%s" % (c, names.get(c, c), "、".join(ws[:3])) for c, ws in hits.items())
-    if review:
-        return "REVIEWED 分类线索复核：%s 有线索 %s，本次取值 %s；复核理由：%s" % (key, clue, v or "未传", review)
-    return ("项目内容/交付要求有线索 %s，但本次取值为 %s。按 category skill 重新判定并 set 一个选项；确属误报写 categoryReview 理由（至少 10 字）"
-            % (clue, "「%s=%s」" % (v, names.get(v, v)) if v else "未传（无映射/skip/被丢弃）"))
 
 
 
@@ -1516,7 +1466,7 @@ def load_map(rid):
         m = ct.load(fp)
     else:
         m = {}
-    for f, d in (("map", {}), ("skip", {}), ("fixedUnmapped", {}), ("toolIssues", []), ("set", {}), ("categoryReview", {})):
+    for f, d in (("map", {}), ("skip", {}), ("fixedUnmapped", {}), ("toolIssues", []), ("set", {})):
         m.setdefault(f, d)
     return m
 
@@ -1569,15 +1519,6 @@ def merge_map(m, spec):
                 die("rules.drop.%s 要写明与准入无关的原因（至少 4 个字）" % i)
             cur["keep"] = [x for x in cur["keep"] if x != i]
             cur["drop"][i] = why.strip()
-    for k, why in (spec.get("categoryReview") or {}).items():     # v43：分类线索门禁的复核理由（确认线索是误报）
-        if not keyre.fullmatch(str(k)):
-            die("categoryReview 的键应为「对象.属性」，收到 %r" % k)
-        if why is None:
-            m["categoryReview"].pop(k, None)
-            continue
-        if not isinstance(why, str) or len(why.strip()) < 10:
-            die("categoryReview.%s 要写明线索为何不构成该类业务（至少 10 个字，引用原文用「」）" % k)
-        m["categoryReview"][k] = why.strip()
     for t in spec.get("toolIssues") or []:
         if isinstance(t, str) and t not in m["toolIssues"]:
             m["toolIssues"].append(t)
@@ -1660,12 +1601,12 @@ def cmd_plan(a):
                 if miss:
                     print("  ENUM_RULE_MISMATCH 规则条件比较的编码 %s 不在 enum 里，选 enum 编码后这条规则也不会命中，记入 toolIssues" % "、".join(miss))
     if enum_keys:
-        print("ENUM_KEYS %d 个规则引用的枚举键：%s。每个都是单选题：逐项估计各选项与证据相符的把握，最高一项超过 50%% 就用 set 提交一个选项（有 enum 交 enum 元素的 key，如 [{\"pass\":\"通过\"}] 交 pass），不传数组或拼接值，并在依据里写「选项｜置信度约N%%｜理由」。相关选项可以重叠，不平分置信度，选择最能说明核心机制的一项。业务类别按 category skill 四步判定（见 CATEGORY_TASK）：具体经营和计酬机制可支持分类，材料冲突须列双方证据并评估，不自动清空分类或只写摘要提示；有明确分类证据不得记「无业务判断口径」。确实无依据或都不过半才 skip R10，写明具体缺口。" % (len(enum_keys), "、".join(enum_keys)))
+        print("ENUM_KEYS %d 个规则引用的枚举键：%s。每个都是单选题：逐项估计各选项与证据相符的把握，最高一项超过 50%% 就用 set 提交一个选项（有 enum 交 enum 元素的 key，如 [{\"pass\":\"通过\"}] 交 pass），不传数组或拼接值，并在依据里写「选项｜置信度约N%%｜理由」。相关选项可以重叠，不平分置信度，选择最能说明核心机制的一项。业务类别按 category skill 依据语义判断（见 CATEGORY_TASK），不按字词匹配：具体经营和计酬机制可支持分类，材料冲突须列双方证据并评估，不自动清空分类或只写摘要提示；有明确分类证据不得记「无业务判断口径」。确实无依据或都不过半才 skip R10，写明具体缺口。" % (len(enum_keys), "、".join(enum_keys)))
     rows_ = {x["id"]: x for x in doc["items"]}
     for k in list(dict.fromkeys(enum_keys + sorted(classified_presets))):      # v43：业务分类键的任务卡
         o, p = k.split(".")
         pd = next((x for x in defs.get(o, {}).get("properties", []) if x["name"] == p), None)
-        card = category_card(k, pd, rules, rows_) if pd else []
+        card = category_card(k, pd, rules, rows_, k in classified_presets) if pd else []
         if card:
             print("\n".join(card))
     inst = ct.inst_keys(rules)
@@ -1719,7 +1660,7 @@ def build(rid, rules, props, sets, spec_in):
     rk = ref_keys(rules)
     ref = ct.rule_index(rules)
     refset = [("%s.%s" % (o, p)) for o, ps in rk.items() for p in ps]
-    if not saved_before and not (spec_in and (spec_in.get("map") or spec_in.get("skip") or spec_in.get("fixedUnmapped") or spec_in.get("rules") or spec_in.get("set") or spec_in.get("categoryReview"))):
+    if not saved_before and not (spec_in and (spec_in.get("map") or spec_in.get("skip") or spec_in.get("fixedUnmapped") or spec_in.get("rules") or spec_in.get("set"))):
         return None                    # 没有本次映射：调用方打印 plan，不替模型选择属性
     for k, v in mp["map"].items():
         for i in norm_entry(k, v)[0]:
@@ -1849,18 +1790,6 @@ def build(rid, rules, props, sets, spec_in):
             tool_issues.append("固定标识 %s（%s）未映射到任何属性：%s" % (i, rows[i]["name"], fixed_unmapped[i]))
     fixed_unmapped = {i: w for i, w in fixed_unmapped.items() if i not in covered}
 
-    del CATEGORY_CHECKS[:]
-    for k in order_keys:                 # v43：业务线索召回门禁（只要求复核，不替模型定值）
-        o, p = k.split(".")
-        pd = next((x for x in defs.get(o, {}).get("properties", []) if x["name"] == p), None)
-        if pd is None or not (k in refset or k in classified_presets):
-            continue
-        got = ents.get(o, {}).get("props", {}).get(p)
-        msg = category_gate(k, pd, rules, rows, got["value"] if got else None, mp["categoryReview"].get(k))
-        if msg and msg.startswith("REVIEWED "):
-            tool_issues.append(msg[len("REVIEWED "):])
-        elif msg:
-            CATEGORY_CHECKS.append((k, msg, category_card(k, pd, rules, rows)))
     # 必填预设键（run_process_required.json 的 required）：请求条目无值时不传、不兜底，只记 notes.toolIssues
     del FALLBACK_FILLED[:]
     for k, item in ct.PRESET_IDS.items():
@@ -1980,12 +1909,8 @@ def cmd_build(a):
             print(ln)
     print(compare_summary(a.rid))
     checks = review_checks(a.rid)
-    for k, msg, _ in CATEGORY_CHECKS:
-        checks.append("CATEGORY_SIGNAL %s｜%s" % (k, msg))
     for c in checks:
         print("CHECK " + c)
-    for _, _, card in CATEGORY_CHECKS:
-        print("\n".join(card))
     if need:
         by = {x["id"]: x for x in ct.load(os.path.join("work", a.rid, "input-extract-detail.json"))["items"]}
         print("NEED_VALUE 以下派生属性需要你按本次属性 label/comment 和规则含义判断后用 set 提交（推不出就不提交，保持 unfilled）：")
