@@ -23,7 +23,7 @@ metadata:
 
 脚本都由 RunSkillScript 运行（只用标准库）。`RunSkillScript` 报路径不存在 / 没有这个工具时按主提示词第六节“技能配置异常”处理，不得改为手写明细。
 
-**用工场景预设**：`Employer.usage_scenario` 必填，和机构 ID 一样由 build 从请求 `projCont`（A08 项目内容）原文自动传入（`run_process_required.json`），不做枚举转码，你不映射、不分类、不 set；提交了也只打印 `PRESET_OVERRIDE_IGNORED` 并忽略。请求没有 projCont 时不传。
+**用工场景按定义取值**：`Employer.usage_scenario` 必填（`run_process_required.json`）。本次定义有 enum/comment 枚举选项时，用项目内容、交付要求等作依据 map/set 单选；build 保留该提交并校验编码，未提交判断时打印 NEED_VALUE。没有枚举定义才自动取 A08 项目原文，忽略改映/skip/set。请求没值不编造；业务场景与经营范围分别按 facts skill 的分类参考判断。
 
 **机构规则输入必填**：inst-list-rc-rules 返回的 model 表达式与 mcp_list_rule 的 condition 一起交给 plan/build/validate。参与审核的机构规则引用属性必须出现在 input-combine.json 的 refKeys、entities 和 input 中，并保留引用规则原文及条目证据；定义未返回也照传。属性仍按本次含义 map/set，不新增固定业务属性表。缺项时脚本报 `INST_REQUIRED_MISSING`、不输出可调用的 INPUT；unfilled 或 notFoundInDefinition 不能代替这些必填输入。
 

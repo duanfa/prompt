@@ -30,8 +30,9 @@ REQUIRED = _rq["required"] if _rq else [
     {"key": k, "item": item, "soft": item in CONFIG.get("softPresets", []), "why": ""}
     for item, keys in CONFIG.get("fixedIdentifiers", {}).items() for k in keys]
 PRESET_IDS = {r["key"]: r["item"] for r in REQUIRED}   # 预设：键 → 标识条目（A01–A04、A08）
-FIXED_ITEMS = list(dict.fromkeys(r["item"] for r in REQUIRED)) or CONFIG.get("fixedItems", [])
+FIXED_ITEMS = list(dict.fromkeys(r["item"] for r in REQUIRED if not r.get("enumFromDefinition"))) or CONFIG.get("fixedItems", [])
 SOFT_PRESETS = {r["item"] for r in REQUIRED if r.get("soft")}   # 预设里“模型提交了也只忽略、不退回”的条目（用工场景 A08）；四个 ID 不在其中，改映/skip 仍退回
+DEFINITION_PRESETS = {r["key"] for r in REQUIRED if r.get("enumFromDefinition")}  # 有枚举定义时由模型单选，不用请求整句覆盖分类值
 ENUM_FALLBACKS = OrderedDict((r["key"], r["fallback"]) for r in _rq.get("enumFallbacks", []) if r["key"] not in PRESET_IDS)   # 枚举键没取到值时的兜底
 
 

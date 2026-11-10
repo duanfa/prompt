@@ -1,5 +1,5 @@
 {
- "_说明": "调用 mcp_run_process 时 input 必须带的键（预设键），以及枚举键的兜底。combine.py build 读取，模型不用读。required 每项：key=对象.属性（本体改名只改这里）；item=取值的清单条目（请求原文，不做转码）；soft=true 时模型对该键提交的 map/skip/set 只忽略并打印 PRESET_OVERRIDE_IGNORED、不退回，false 时改映/skip 退回（四个 ID 不可互换）；why=必填原因。定义里有没有这个键都传；请求没值不传、不兜底，只记 notes.toolIssues。",
+ "_说明": "调用 mcp_run_process 时 input 必须带的键（预设键），以及枚举键的兜底。combine.py build 读取，模型不用读。required 每项：key=对象.属性（本体改名只改这里）；item=取值的清单条目（请求原文，不做转码）；enumFromDefinition=true 且本次定义有枚举时，保留模型的 map/skip/set 并校验单选编码；否则 soft=true 时模型对该键提交的 map/skip/set 只忽略并打印 PRESET_OVERRIDE_IGNORED、不退回，false 时改映/skip 退回（四个 ID 不可互换）；why=必填原因。定义里有没有这个键都传；请求没值不传、不兜底，只记 notes.toolIssues。",
  "required": [
   {
    "key": "Employer.employer_id",
@@ -35,7 +35,8 @@
    "key": "Employer.usage_scenario",
    "item": "A08",
    "soft": true,
-   "why": "用工场景（projCont 项目内容）必填，原文照传，不做枚举转码；无值时交给 RULE-GATE-003（IS EMPTY）判定"
+   "enumFromDefinition": true,
+   "why": "用工场景必填：有 enum/comment 枚举定义时按项目内容和交付要求由模型单选编码，无枚举定义时取 projCont 原文；无值不编造"
   }
  ],
  "enumFallbacks": [],

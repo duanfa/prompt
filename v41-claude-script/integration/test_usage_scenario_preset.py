@@ -1,5 +1,4 @@
-"""用工场景预设（2026-11-09）：Employer.usage_scenario 必填，和机构 ID 一样由 build 从请求 projCont（A08）原文自动传入。
-取代原“一般行业兜底”（generalIndustryFallback）：用工场景不再由模型分类或脚本补漏。
+"""用工场景按本次定义取值：有枚举时接收模型单选编码，没有枚举时预设取项目原文。
 另含规则接口成功码回归：trace e974ced3 中 inst-list-rc-rules 返回 code=200 被误判“不是成功码”。"""
 import json
 import os
@@ -16,7 +15,7 @@ BASE = {"map": {"Employer.employer_name": ["A02"]}}   # 一条普通映射：完
 
 
 class UsageScenarioPresetTests(unittest.TestCase):
-    comment = "枚举 IndustryCategory：金融类、传销类、违法类、高危类、同业类、敏感类、音视频制作、一般行业"
+    comment = None
 
     def setUp(self):
         self.f = fx.ScriptTests()
@@ -59,11 +58,83 @@ class UsageScenarioPresetTests(unittest.TestCase):
         self.assertTrue(prop["value_source"].startswith("A08｜"))
         self.assertNotIn("usage_scenario", json.dumps(self.combined().get("unfilled", {}), ensure_ascii=False))
 
-    def test_enum_definition_does_not_drop_raw_text(self):
+    def test_enum_definition_requires_selection_instead_of_passing_raw_text(self):
         self.props["data"][0]["properties"][0]["enum"] = {"ordinary": "一般行业", "sensitive": "敏感类"}
         self.f.ready()
         out, inp = self.ok(BASE)
-        self.assertEqual(inp["Employer"]["usage_scenario"], PROJ_CONT)
+        self.assertNotIn("usage_scenario", inp.get("Employer", {}))
+        self.assertIn("NEED_VALUE", out)
+        self.assertNotIn("ENUM_DROPPED", out)
+
+    def test_model_enum_selection_is_preserved_and_checked(self):
+        self.props["data"][0]["properties"][0]["enum"] = {"ordinary": "一般行业", "sensitive": "敏感类"}
+        self.f.ready()
+        spec = {"map": {TARGET: ["A08"]}, "set": {TARGET: ["ordinary", "派生:A08｜一般行业｜置信度约95%｜内部管理系统开发调试"]}}
+        out, inp = self.ok(spec)
+        self.assertEqual(inp["Employer"]["usage_scenario"], "ordinary")
+        self.assertNotIn("PRESET_OVERRIDE_IGNORED", out)
+        self.assertNotIn("NEED_VALUE", out)
+        spec["set"][TARGET][0] = ["ordinary", "sensitive"]
+        out, inp = self.ok(spec)
+        self.assertNotIn("usage_scenario", inp.get("Employer", {}))
+        self.assertIn("ENUM_DROPPED", out)
+
+    def test_comment_enum_is_also_classified(self):
+        self.props["data"][0]["properties"][0]["comment"] = "枚举 UsageScenario：医药、直播带货、一般用工场景"
+        self.f.ready()
+        out, inp = self.ok({"map": {TARGET: ["A08"]}, "set": {TARGET: ["一般用工场景", "派生:A08｜一般用工场景｜内部管理系统开发调试"]}})
+        self.assertEqual(inp["Employer"]["usage_scenario"], "一般用工场景")
+
+    def test_enum_selection_is_kept_on_rebuild(self):
+        """v43：set 落盘，重跑 build 不重提也沿用；set 引用的依据比默认映射多时同步映射，不再退回。"""
+        self.props["data"][0]["properties"][0]["enum"] = {"ordinary": "一般行业", "sensitive": "敏感类"}
+        self.f.ready()
+        self.ok({"set": {TARGET: ["ordinary", "派生:A08,A07｜一般行业｜内部管理系统开发调试"]}})
+        out, inp = self.ok(BASE)
+        self.assertEqual(inp["Employer"]["usage_scenario"], "ordinary")
+        self.assertIn("SET_KEPT", out)
+
+    def test_enum_skip_is_preserved_and_later_selection_can_replace_it(self):
+        self.props["data"][0]["properties"][0]["enum"] = {"ordinary": "一般行业", "sensitive": "敏感类"}
+        self.f.ready()
+        out, inp = self.ok({"skip": {"R10": [TARGET]}})
+        self.assertNotIn("usage_scenario", inp.get("Employer", {}))
+        out, inp = self.ok({"map": {TARGET: ["A08"]}, "set": {TARGET: ["ordinary", "派生:A08｜一般行业｜内部管理系统开发调试"]}})
+        self.assertEqual(inp["Employer"]["usage_scenario"], "ordinary")
+
+    def test_enum_preset_accepts_multiple_evidence_items_even_without_rule_reference(self):
+        self.props["data"][0]["properties"][0]["enum"] = {"ordinary": "一般行业", "sensitive": "敏感类"}
+        self.props["data"][0]["properties"].append({"name": "enterprise_name", "label": "企业名称"})
+        self.rules["data"] = [{"ruleId": "OTHER-GATE", "label": "企业名称为空", "condition": "Employer.enterprise_name IS EMPTY"}]
+        self.f.ready()
+        out, inp = self.ok({"map": {TARGET: ["A07", "A08"]}, "set": {TARGET: ["ordinary", "派生:A07,A08｜一般行业｜内部管理系统开发调试"]}})
+        self.assertEqual(inp["Employer"]["usage_scenario"], "ordinary")
+
+    def test_all_sensitive_scenario_codes_reach_input(self):
+        cases = [
+            ("pharma", "医药", "销售药品和医疗器械并拜访医院客户"),
+            ("live_stream", "直播", "开展在线直播节目主持和互动直播服务"),
+            ("live_commerce", "直播带货", "主播直播介绍商品并引导观众下单购买"),
+            ("film_tv", "影视", "负责影视传媒项目拍摄和制作执行"),
+            ("law_firm", "律所", "律师事务所承接法律咨询及诉讼代理"),
+            ("accounting_firm", "会计", "会计师事务所承接财务审计和专业会计服务"),
+            ("insurance_broker", "保险经纪", "为客户推介保险产品并跟进保险经纪代理业务"),
+        ]
+        self.props["data"][0]["properties"][0]["enum"] = [{code: label} for code, label, _ in cases] + [{"general": "一般用工场景"}]
+        self.rules["data"].append({"ruleId": "SCENE-RESTRICTED", "label": "敏感类用工场景禁入",
+                                  "condition": TARGET + " IN {" + ", ".join(x[0] for x in cases) + "}", "riskMeasure": "拦截"})
+        for code, label, project in cases:
+            with self.subTest(code=code):
+                spec = json.loads(fx.read("init_spec.json"))
+                spec["request"].update({"projCont": project, "dlvrDemd": project})
+                rc, out = fx.run(self.f.ws, "detail.py", "init", "--biz", "biz_D.txt", "biz_B.txt", "biz_T.txt", "--rules", "rules.json", stdin=json.dumps(spec, ensure_ascii=False))
+                self.assertEqual(rc, 0, out)
+                rc, out = fx.fill_fixture(self.f.ws)
+                self.assertEqual(rc, 0, out)
+                out, inp = self.ok({"map": {TARGET: ["A07", "A08"]}, "set": {TARGET: [code, "派生:A07,A08｜%s｜置信度约95%%｜%s" % (label, project)]}})
+                self.assertEqual(inp["Employer"]["usage_scenario"], code)
+                self.assertNotIn("NEED_VALUE", out)
+                self.assertEqual(self.combined()["entities"]["Employer"]["properties"]["usage_scenario"]["extractIds"], ["A07", "A08"])
 
     def test_model_map_skip_set_are_ignored_not_rejected(self):
         self.f.ready()

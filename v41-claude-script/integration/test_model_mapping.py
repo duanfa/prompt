@@ -65,13 +65,37 @@ class ModelMappingTests(unittest.TestCase):
         self.assertEqual(prop["extractIds"], ["C07", "C08", "C10"])
         self.assertIn("伪造嫌疑", prop["value_source"])
 
-    def test_composite_value_is_required_each_build(self):
+    def test_composite_value_is_kept_until_withdrawn(self):
+        """v43：set 落盘，之后的 build 不重提也沿用（trace 173 重写 stdin 时丢了分类）；写 null 撤回。"""
         rc, out = self.build(self.model_spec())
         self.assertEqual(rc, 0, out)
+        value = self.f.inp(out)[self.obj][self.prop]
         rc, out = self.build()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("SET_KEPT", out)
+        self.assertEqual(self.f.inp(out)[self.obj][self.prop], value)
+        rc, out = self.build({"set": {self.key: None}})
         self.assertEqual(rc, 0, out)
         self.assertIn("NEED_VALUE", out)
         self.assertNotIn(self.prop, self.f.inp(out).get(self.obj, {}))
+
+    def test_kept_set_is_dropped_when_evidence_changes(self):
+        rc, out = self.build(self.model_spec())
+        self.assertEqual(rc, 0, out)
+        rc, out = self.f.force([["C10", None, "R06｜防伪及头像细节无法确认"]])
+        self.assertEqual(rc, 0, out)
+        rc, out = self.build()
+        self.assertIn("SET_STALE", out)
+        self.assertNotIn(self.prop, self.f.inp(out).get(self.obj, {}))
+
+    def test_set_alone_supplies_the_mapping(self):
+        """v43（trace 173）：只交 set 不交 map，依据条目就是映射，不能静默记 R10。"""
+        spec = self.model_spec()
+        spec.pop("map", None)
+        rc, out = self.build(spec)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("MAP_SYNCED", out)
+        self.assertIn(self.prop, self.f.inp(out)[self.obj])
 
     def test_single_evidence_can_have_model_supplied_enum_value(self):
         self.files(obj="Review", prop="subject_kind", label="主体类别",

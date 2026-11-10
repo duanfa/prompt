@@ -1294,6 +1294,176 @@ FIX_ITEMS = ct.FIXED_ITEMS            # 请求里的预设条目 A01–A04 + A08
 MAP_FILE = "key-map.json"
 PRESET_UNDEFINED = []                 # 本次属性定义里没有、仍按预设照传的标识键（只打印，不进 notes）
 FALLBACK_FILLED = []                  # 本次按 run_process_required.json 兜底传入的枚举键 (键, 值)
+CATEGORY_CHECKS = []                  # v43：业务线索门禁未通过的分类键 (键, 说明)
+
+
+def set_cited(vsrc):
+    """set 依据「派生:A08,A07｜…」里的条目 ID。"""
+    return [i.strip() for i in vsrc.split("｜", 1)[0].removeprefix("派生:").split(",") if i.strip()]
+
+
+def sync_sets(mp, sets, spec_in, entries, skipmap, rows, classified_presets):
+    """v43（trace 173）：模型 set 了 headcount_rebate 却没同时 map，build 先看到「无映射」就记 R10，set 被静默丢掉；
+    另一个常见情况是 set 引用的依据比默认映射多（用工场景 A08 → A08,A07），报错后整份 stdin 重写，别的键又丢了。现在：
+    ①set 落盘（key-map.json 的 set，带依据条目值的指纹），之后的 build 不重提也沿用，依据值变了即作废（SET_STALE），重提覆盖，null 撤回，skip 同键即撤回；
+    ②set 自带依据条目就是映射：没有 map 时直接用；依据比 map 多时同步 map；
+    ③同一次提交里 map 与 set 都给了、且 set 少引了 map 的条目，仍退回（不许只挑有利证据）。"""
+    spec_in = spec_in or {}
+    new_map = spec_in.get("map") or {}
+    new_skip = {str(k) for ks in (spec_in.get("skip") or {}).values() if isinstance(ks, list) for k in ks}
+    both = sorted(k for k, v in sets.items() if v is not None and k in new_skip)
+    if both:
+        die("这次提交里同一个键既在 set 又在 skip（%s）：一个键只能选一种处理，请决定后重交" % "、".join(both[:6]))
+    def fp(vsrc):                       # 依据条目当前值的指纹：明细改了（fill --force / recheck），落盘的 set 作废
+        return "｜".join("%s=%s" % (i, json.dumps(rows[i]["value"], ensure_ascii=False) if i in rows else "?") for i in set_cited(vsrc))
+
+    saved = mp.setdefault("set", {})
+    for k in new_skip:
+        saved.pop(k, None)
+    for k, v in sets.items():
+        if v is None:
+            saved.pop(k, None)
+        else:
+            saved[k] = {"v": v, "fp": fp(v[1])}
+    locked = {k for k in ct.PRESET_IDS if k not in classified_presets}
+    stale = []
+    for k in list(saved):
+        if k in locked:
+            saved.pop(k)
+        elif k not in sets and saved[k].get("fp") != fp(saved[k]["v"][1]):
+            saved.pop(k)
+            stale.append(k)
+    if stale:
+        print("SET_STALE 以下 set 的依据条目值已变，上次的判断作废，请按新依据重判后重提：%s" % "、".join(stale))
+    kept = [k for k in saved if k not in sets]
+    if kept:
+        print("SET_KEPT 沿用上次 build 已提交的 set（依据未变，不用重提；要改就重提该键，撤回写 null）：%s" % "、".join(kept))
+    for k, rec in list(saved.items()):
+        value, vsrc = rec["v"]
+        cited = set_cited(vsrc)
+        bad = [i for i in cited if i not in rows]
+        if not cited or bad:
+            die("set.%s 的依据条目 %s 不在清单里：写成「派生:清单条目ID,ID｜依据」" % (k, "、".join(bad) or "（空）"))
+        cur = entries.get(k, (None, False))[0]
+        if cur is not None and set(cur) == set(cited):
+            continue
+        if k in new_map and new_map[k] is not None:
+            m_ids = norm_entry(k, new_map[k])[0]
+            if not set(m_ids) <= set(cited):
+                die("set.%s 的来源条目必须与 map 一致：map=%s，来源=%s（set 要列全 map 的条目，可以多不能少）" % (k, m_ids, cited))
+        entries[k] = (cited, entries.get(k, (None, False))[1])
+        mp["map"][k] = cited
+        if k in skipmap:
+            skipmap.pop(k)
+            for c in mp["skip"]:
+                mp["skip"][c] = [x for x in mp["skip"][c] if x != k]
+        print("MAP_SYNCED %s 的映射按 set 依据取 %s（原映射：%s），不用再单独 map" % (k, ",".join(cited), ",".join(cur) if cur else "无"))
+    mp["skip"] = {c: v for c, v in mp["skip"].items() if v}
+    return {k: rec["v"] for k, rec in saved.items()}
+
+
+# ---- v43：业务类别线索（召回门禁）。词表在 combine_config.json 的 categorySignals，按选项中文名匹配，不绑定编码 ----
+NEG_BEFORE = re.compile(r"(不|无|非|未|禁止|严禁|不得|不涉及|不含|不从事|杜绝)[^，,。；;]{0,4}$")
+
+
+def category_options(pd):
+    """枚举键的选项 → (编码或中文, 中文, 线索词)。至少 2 个选项能对上词表才算业务分类键，否则返回 []。"""
+    cfg = ct.CONFIG.get("categorySignals") or {}
+    src, opts = enum_options(pd)
+    if not src or not cfg:
+        return []
+    table = [(a.split("|"), words) for a, words in (cfg.get("labels") or {}).items()]
+    out, n = [], 0
+    for c, l in opts:
+        name = (l or c or "").strip()
+        words = next((w for names, w in table if name in names), None)
+        n += words is not None
+        out.append((c if src == "enum" else name, name, words or []))
+    return out if n >= 2 else []
+
+
+def category_text(rows):
+    cfg = ct.CONFIG.get("categorySignals") or {}
+    return [(i, rows[i]["name"], rows[i]["value"]) for i in cfg.get("sources", []) if i in rows
+            and rows[i]["source"].startswith("Y｜") and isinstance(rows[i]["value"], str) and rows[i]["value"].strip()]
+
+
+def category_hits(opts, texts):
+    """{选项值: [命中的线索词]}；线索词前几个字有否定（不/无/禁止…）的不算。"""
+    hits = {}
+    for code, name, words in opts:
+        for w in words:
+            for _, _, t in texts:
+                pos = [m.start() for m in re.finditer(re.escape(w), t)]
+                if any(not NEG_BEFORE.search(t[max(0, i - 8):i]) for i in pos):
+                    hits.setdefault(code, [])
+                    if w not in hits[code]:
+                        hits[code].append(w)
+    return hits
+
+
+def option_rules(key, code, rules):
+    """把该选项作为命中条件（= 或 IN，非 NOT IN）的规则。"""
+    out = []
+    for r in rules:
+        c = r.get("condition") or ""
+        eq = re.search(re.escape(key) + r"\s*==?\s*\"?" + re.escape(code) + r"\"?(?![\w])", c)
+        ins = [m.group(1) for m in re.finditer(re.escape(key) + r"\s+IN\s*\{([^}]*)\}", c)]
+        if eq or any(code in [t.strip().strip("\"' ") for t in x.split(",")] for x in ins):
+            out.append(r)
+    return out
+
+
+def category_card(key, pd, rules, rows):
+    """plan/build 打印的分类任务卡：原文、线索、各选项对应的规则、提交模板。不是业务分类键返回 []。"""
+    opts = category_options(pd)
+    if not opts:
+        return []
+    texts = category_text(rows)
+    hits = category_hits(opts, texts)
+    lines = ["CATEGORY_TASK %s｜%s：业务分类单选，按 category skill 的四步判定（先写机制，再按决策顺序选）" % (key, pd.get("label") or "")]
+    for i, n, v in texts:
+        lines.append("  原文 %s %s：%s" % (i, n, short(v, 160)))
+    if not texts:
+        lines.append("  原文：项目内容、交付要求等均无值（不兜底一般业务，skip R01/R10 写明缺口）")
+    risky = []
+    for code, name, _ in opts:
+        rs = option_rules(key, code, rules)
+        if rs:
+            risky.append("%s=%s→%s" % (code, name, ",".join("%s(%s)" % (r["ruleId"], r.get("riskMeasure") or "") for r in rs[:2])))
+    if risky:
+        lines.append("  会触发规则的选项：%s" % "；".join(risky))
+    if hits:
+        lines.append("  线索（脚本按词表找到，只提示不定值）：%s" % "；".join(
+            "%s=%s←%s" % (c, next(n for cc, n, _ in opts if cc == c), "、".join("「%s」" % w for w in ws[:4])) for c, ws in hits.items()))
+        lines.append("  有线索时不能传一般类、不能 skip；确认线索是误报（如反诈宣传、金融软件开发）才在 stdin 写 \"categoryReview\":{\"%s\":\"理由，引用原文用「」\"}" % key)
+    ids = ",".join(i for i, _, _ in texts) or "A08,A07"
+    lines.append("  提交（只交 set 即可，不用另写 map；set 会落盘）：\"set\":{\"%s\":[\"<选项编码>\",\"派生:%s｜<选项中文>｜置信度约N%%｜机制：<做什么/卖什么/怎么计酬/在哪作业>\"]}" % (key, ids))
+    return lines
+
+
+def category_gate(key, pd, rules, rows, value, review):
+    """build 门禁：有线索的分类键，值缺失、选了一般类、或选了不触发任何规则的项而线索项会触发规则 → 返回阻断说明；
+    有 categoryReview 理由则返回「REVIEWED …」记入 toolIssues。没有线索或不是分类键返回 None。"""
+    opts = category_options(pd)
+    if not opts:
+        return None
+    hits = category_hits(opts, category_text(rows))
+    if not hits or (value is not None and str(value) in hits):
+        return None
+    names = {c: n for c, n, _ in opts}
+    hit_risky = [c for c in hits if option_rules(key, c, rules)]
+    v = None if value is None else str(value)
+    general = v is not None and "一般" in names.get(v, v)
+    if v is not None and not general and (option_rules(key, v, rules) or not hit_risky):
+        return None                      # 选了另一个特殊类别：模型的判断，放行
+    clue = "；".join("%s=%s←%s" % (c, names.get(c, c), "、".join(ws[:3])) for c, ws in hits.items())
+    if review:
+        return "REVIEWED 分类线索复核：%s 有线索 %s，本次取值 %s；复核理由：%s" % (key, clue, v or "未传", review)
+    return ("项目内容/交付要求有线索 %s，但本次取值为 %s。按 category skill 重新判定并 set 一个选项；确属误报写 categoryReview 理由（至少 10 字）"
+            % (clue, "「%s=%s」" % (v, names.get(v, v)) if v else "未传（无映射/skip/被丢弃）"))
+
+
 
 
 def row_code(row):
@@ -1324,7 +1494,7 @@ def load_map(rid):
         m = ct.load(fp)
     else:
         m = {}
-    for f, d in (("map", {}), ("skip", {}), ("fixedUnmapped", {}), ("toolIssues", [])):
+    for f, d in (("map", {}), ("skip", {}), ("fixedUnmapped", {}), ("toolIssues", []), ("set", {}), ("categoryReview", {})):
         m.setdefault(f, d)
     return m
 
@@ -1377,6 +1547,15 @@ def merge_map(m, spec):
                 die("rules.drop.%s 要写明与准入无关的原因（至少 4 个字）" % i)
             cur["keep"] = [x for x in cur["keep"] if x != i]
             cur["drop"][i] = why.strip()
+    for k, why in (spec.get("categoryReview") or {}).items():     # v43：分类线索门禁的复核理由（确认线索是误报）
+        if not keyre.fullmatch(str(k)):
+            die("categoryReview 的键应为「对象.属性」，收到 %r" % k)
+        if why is None:
+            m["categoryReview"].pop(k, None)
+            continue
+        if not isinstance(why, str) or len(why.strip()) < 10:
+            die("categoryReview.%s 要写明线索为何不构成该类业务（至少 10 个字，引用原文用「」）" % k)
+        m["categoryReview"][k] = why.strip()
     for t in spec.get("toolIssues") or []:
         if isinstance(t, str) and t not in m["toolIssues"]:
             m["toolIssues"].append(t)
@@ -1406,10 +1585,17 @@ def empty_gates(key, rules):
     return [r for r in rules if pat.search(r.get("condition") or "")]
 
 
+def enum_presets(props):
+    """配置要求随定义取值的预设键：只有本次确实返回枚举选项时才交给模型分类。"""
+    return {o["name"] + "." + p["name"] for o in props for p in o.get("properties", [])
+            if o["name"] + "." + p["name"] in ct.DEFINITION_PRESETS and enum_options(p)[0]}
+
+
 def cmd_plan(a):
     """只读：列出本次规则引用的属性（含定义的 label/comment）和清单条目，供你按语义决定「哪个条目 → 哪个属性」。
     映射不是对照表：属性名随本体随时会变，只看本次定义返回的 label/comment 与条目 name/desc 的含义。"""
     rules, props = rules_list(a.rules), props_list(a.props)
+    classified_presets = enum_presets(props)
     rules, _ = rule_scope(rules, load_map(a.rid))
     defs = {o["name"]: o for o in props}
     rk = ref_keys(rules)
@@ -1422,9 +1608,10 @@ def cmd_plan(a):
     print("PLAN 本次规则引用 %d 个键（%d 个对象）。按含义决定每个键怎么处理，用 build 的 stdin 提交：" % (sum(len(v) for v in rk.values()), len(rk)))
     print('  {"map":{"对象.属性":["条目ID"]},   // 一个条目；多条共同推出写多个 ID（之后按 NEED_VALUE 用 set 给值）')
     print('   "skip":{"R14":[键…],"R13":[键…],"R10":[键…],"R11":[键…]},   // 不填的键：R14 结果类（结论/处置/是否放行/汇总信号）、R13 外部来源（三方核查/结算/个人/流水）、R10 无业务判断口径、R11 定义含义与规则用法冲突')
+    print('   "set":{"对象.属性":[值,"派生:条目ID,ID｜依据"]},   // 判断/枚举/多条综合；依据里的条目即映射，不必另写 map；set 落盘，之后不重提也沿用，撤回写 null')
     print('   "fixedUnmapped":{"A02":"原因"},   // 四个标识条目没有可映射的属性时才写')
     print('   "toolIssues":["…"]}                // R11 冲突等需要记入 notes.toolIssues 的说明')
-    print("规则：只映射「规则引用的键」（四个标识和用工场景已预设，不用管）；条目没有证据（值为 N）也可映射，会自动按该条目的 N 原因码登记；不确定就 skip，不猜。")
+    print("规则：只映射规则引用键及预设键。四个标识自动传入；用工场景若有枚举定义，必须按证据单选并用 set 提交，不用整句原文替代编码；没有枚举定义才自动取项目原文。条目没有证据（值为 N）也可映射，会按该条目的 N 原因码登记；不确定就 skip，不猜。")
     print("-- 规则引用的键（对象.属性｜label｜comment｜引用规则数｜示例条件）--")
     undefined, enum_keys = [], []
     for o, ps in rk.items():
@@ -1445,20 +1632,29 @@ def cmd_plan(a):
             if src:
                 enum_keys.append(k)
                 print("  ENUM 选项（来自 %s）：%s" % (src, enum_text(opts)))
+                if k in classified_presets:
+                    print("  ENUM_PRESET 必填预设的取值以本次枚举定义为准：默认依据 %s，需用 set 提交一个分类值；可用 map 补充全部依据，不再忽略分类提交。" % ct.PRESET_IDS[k])
                 miss = enum_rule_mismatch(k, dp[p], rules)
                 if miss:
                     print("  ENUM_RULE_MISMATCH 规则条件比较的编码 %s 不在 enum 里，选 enum 编码后这条规则也不会命中，记入 toolIssues" % "、".join(miss))
     if enum_keys:
-        print("ENUM_KEYS %d 个规则引用的枚举键：%s。每个都是选择题：逐项估计各选项与证据相符的把握，最高一项超过 50%% 就用 set 提交该选项（有 enum 交 enum 元素的 key，如 [{\"pass\":\"通过\"}] 交 pass），并在依据里写「选项｜置信度约N%%｜理由」；都不超过 50%% 就留空：value 为 null、skip R10、不传。" % (len(enum_keys), "、".join(enum_keys)))
+        print("ENUM_KEYS %d 个规则引用的枚举键：%s。每个都是单选题：逐项估计各选项与证据相符的把握，最高一项超过 50%% 就用 set 提交一个选项（有 enum 交 enum 元素的 key，如 [{\"pass\":\"通过\"}] 交 pass），不传数组或拼接值，并在依据里写「选项｜置信度约N%%｜理由」。相关选项可以重叠，不平分置信度，选择最能说明核心机制的一项。业务类别按 category skill 四步判定（见 CATEGORY_TASK）：具体经营和计酬机制可支持分类，材料冲突须列双方证据并评估，不自动清空分类或只写摘要提示；有明确分类证据不得记「无业务判断口径」。确实无依据或都不过半才 skip R10，写明具体缺口。" % (len(enum_keys), "、".join(enum_keys)))
+    rows_ = {x["id"]: x for x in doc["items"]}
+    for k in list(dict.fromkeys(enum_keys + sorted(classified_presets))):      # v43：业务分类键的任务卡
+        o, p = k.split(".")
+        pd = next((x for x in defs.get(o, {}).get("properties", []) if x["name"] == p), None)
+        card = category_card(k, pd, rules, rows_) if pd else []
+        if card:
+            print("\n".join(card))
     inst = ct.inst_keys(rules)
     if inst:
         print("INST_KEYS 机构风控规则（inst-rc-rule-mcp）引用 %d 个键：%s。这些是调用 mcp_run_process 的必填输入，与 mcp_list_rule 引用键一起组装。本体定义里没有也要按规则含义用 map 映到有证据的清单条目；缺项时 build/validate 报 INST_REQUIRED_MISSING，不得调用引擎，不得编造值。" % (len(inst), "、".join(inst)))
         undefined = [k for k in undefined if k not in inst]
     if undefined:
         print("-- 规则引用但本次定义没有（自动记 notFoundInDefinition，不用处理）：%s" % "、".join(undefined))
-    print("-- 预设条目（四个标识 + 用工场景取项目内容）：不用你映射，build 自动传入；四个 ID 不可互换，预设键不能改映、skip 或 set（预设在 run_process_required.json）--")
+    print("-- 预设条目：四个标识自动传入、不可改映或 skip；用工场景有枚举时需 set 单选，没有枚举才自动取项目原文（配置在 run_process_required.json）--")
     by = {x["id"]: x for x in doc["items"]}
-    for i in FIX_ITEMS:
+    for i in dict.fromkeys(list(FIX_ITEMS) + list(ct.PRESET_IDS.values())):
         keys = [k for k, it in ct.PRESET_IDS.items() if it == i]
         print("%s｜%s｜%s｜预设→%s" % (i, by[i]["name"], short(by[i]["value"], 30) if by[i]["source"].startswith("Y｜") else "（空）", "、".join(keys) or "（无）"))
     cand = []
@@ -1497,10 +1693,11 @@ def build(rid, rules, props, sets, spec_in):
     all_rules = rules
     rules, rules_dropped = rule_scope(rules, mp)      # v39：与客户准入无关的规则先抛掉，它们条件里的字段不进 input-combine.json
     defs = {o["name"]: o for o in props}
+    classified_presets = enum_presets(props)
     rk = ref_keys(rules)
     ref = ct.rule_index(rules)
     refset = [("%s.%s" % (o, p)) for o, ps in rk.items() for p in ps]
-    if not saved_before and not (spec_in and (spec_in.get("map") or spec_in.get("skip") or spec_in.get("fixedUnmapped") or spec_in.get("rules"))):
+    if not saved_before and not (spec_in and (spec_in.get("map") or spec_in.get("skip") or spec_in.get("fixedUnmapped") or spec_in.get("rules") or spec_in.get("set") or spec_in.get("categoryReview"))):
         return None                    # 没有本次映射：调用方打印 plan，不替模型选择属性
     for k, v in mp["map"].items():
         for i in norm_entry(k, v)[0]:
@@ -1508,7 +1705,11 @@ def build(rid, rules, props, sets, spec_in):
                 die("map.%s 引用了清单里没有的条目 %s" % (k, i))
     skipmap = {k: c for c, ks in mp["skip"].items() for k in ks}
     entries = {k: norm_entry(k, v) for k, v in mp["map"].items()}
-    for k, item in ct.PRESET_IDS.items():     # 预设（四个标识 + 用工场景）：自动传入，不可改映、不可 skip（四个 ID 不可互换）
+    for k, item in ct.PRESET_IDS.items():     # 标识固定取原文；配置允许随定义分类的预设键先交给模型单选
+        if k in classified_presets:
+            if k not in entries and k not in skipmap:
+                entries[k] = ([item], True)
+            continue                    # 枚举定义优先：保留模型的 map/skip/set，后面正常检查类型与选项
         if item in ct.SOFT_PRESETS:           # 用工场景：值固定取请求原文，模型的 map/skip/set 一律不采用，只提示、不退回（免得多跑一轮）
             touched = [w for w, hit in (("skip", k in skipmap), ("map", k in entries and entries[k][0] != [item]), ("set", k in sets)) if hit]
             skipmap.pop(k, None)
@@ -1522,6 +1723,7 @@ def build(rid, rules, props, sets, spec_in):
         if k in entries and entries[k][0] != [item]:
             die("%s 是预设的标识键，只能对应 %s，不能改映到 %s：企业 ID、需求 ID、机构 ID 不可互换" % (k, item, "、".join(entries[k][0])))
         entries[k] = ([item], True)
+    sets = sync_sets(mp, sets, spec_in, entries, skipmap, rows, classified_presets)
     with open(map_path(rid), "w", encoding="utf-8") as f:     # 全部校验通过后才落盘：被拒的提交不能留在 key-map.json 里毒化以后的 build
         json.dump(mp, f, ensure_ascii=False, indent=1)
     fixed_keys = [k for k, (ids, _) in entries.items() if len(ids) == 1 and ids[0] in FIX_ITEMS]
@@ -1530,7 +1732,7 @@ def build(rid, rules, props, sets, spec_in):
     ignored, fixed_unmapped, tool_issues = [], dict(mp["fixedUnmapped"]), list(mp["toolIssues"])
     enum_dropped, type_dropped = [], []
     del PRESET_UNDEFINED[:]
-    order_keys = list(dict.fromkeys(fixed_keys + refset))
+    order_keys = list(dict.fromkeys(fixed_keys + list(ct.PRESET_IDS) + refset))
 
     def add_unfilled(k, code):
         o, p = k.split(".")
@@ -1543,7 +1745,7 @@ def build(rid, rules, props, sets, spec_in):
         if pd is None and k in inst:       # v41：机构风控规则引用的键，本体定义没有也照传
             pd = inst_def(k, ref)
             defs.setdefault(o, {"name": o, "label": o, "comment": "机构风控规则引用（本体定义未返回）", "properties": []})
-        is_ref, is_fixed = k in refset, k in fixed_keys
+        is_ref, is_fixed = k in refset, (k in ct.PRESET_IDS or k in fixed_keys) and k not in classified_presets
         ids, force = entries.get(k, (None, False))
         if pd is None:
             if is_ref:
@@ -1585,7 +1787,7 @@ def build(rid, rules, props, sets, spec_in):
                 add_unfilled(k, "R10")
                 notes_unfilled.append((k, "R10", "模型未给出可确认的取值"))
                 continue
-        elif len(ids) > 1:
+        elif len(ids) > 1 or (k in classified_presets and main["source"].startswith("Y｜")):
             need_value.append((k, ids))
             add_unfilled(k, "R10")
             notes_unfilled.append((k, "R10", "派生属性待模型判断"))
@@ -1625,12 +1827,27 @@ def build(rid, rules, props, sets, spec_in):
             tool_issues.append("固定标识 %s（%s）未映射到任何属性：%s" % (i, rows[i]["name"], fixed_unmapped[i]))
     fixed_unmapped = {i: w for i, w in fixed_unmapped.items() if i not in covered}
 
+    del CATEGORY_CHECKS[:]
+    for k in order_keys:                 # v43：业务线索召回门禁（只要求复核，不替模型定值）
+        o, p = k.split(".")
+        pd = next((x for x in defs.get(o, {}).get("properties", []) if x["name"] == p), None)
+        if pd is None or not (k in refset or k in classified_presets):
+            continue
+        got = ents.get(o, {}).get("props", {}).get(p)
+        msg = category_gate(k, pd, rules, rows, got["value"] if got else None, mp["categoryReview"].get(k))
+        if msg and msg.startswith("REVIEWED "):
+            tool_issues.append(msg[len("REVIEWED "):])
+        elif msg:
+            CATEGORY_CHECKS.append((k, msg, category_card(k, pd, rules, rows)))
     # 必填预设键（run_process_required.json 的 required）：请求条目无值时不传、不兜底，只记 notes.toolIssues
     del FALLBACK_FILLED[:]
     for k, item in ct.PRESET_IDS.items():
         o, p = k.split(".")
         if p not in ents.get(o, {}).get("props", {}):
-            tool_issues.append("必填键 %s 的条目 %s（%s）无值，未传给 mcp_run_process" % (k, item, rows[item]["name"]))
+            if k in classified_presets and rows[item]["source"].startswith("Y｜"):
+                tool_issues.append("必填键 %s 的业务原文已提供，但尚无可用的单选分类值，未传给 mcp_run_process" % k)
+            else:
+                tool_issues.append("必填键 %s 的条目 %s（%s）无值，未传给 mcp_run_process" % (k, item, rows[item]["name"]))
     # 枚举键兜底（enumFallbacks）：本次规则引用、定义里有选项、却没取到值的键，传配置的选项；不是选项就不传
     for k, fb in ct.ENUM_FALLBACKS.items():
         o, p = k.split(".")
@@ -1716,6 +1933,9 @@ def cmd_build(a):
             except ValueError as exc:
                 die("stdin 不是合法 JSON（%s）" % exc)
             for k, v in (spec.get("set") or {}).items():
+                if v is None:            # v43：null 表示撤回之前落盘的 set
+                    sets[k] = None
+                    continue
                 if not (isinstance(v, list) and len(v) == 2 and isinstance(v[1], str) and v[1].startswith("派生:") and "｜" in v[1]):
                     die("set.%s 应为 [值, \"派生:ID,ID｜依据\"]" % k)
                 sets[k] = v
@@ -1741,8 +1961,12 @@ def cmd_build(a):
             print(ln)
     print(compare_summary(a.rid))
     checks = review_checks(a.rid)
+    for k, msg, _ in CATEGORY_CHECKS:
+        checks.append("CATEGORY_SIGNAL %s｜%s" % (k, msg))
     for c in checks:
         print("CHECK " + c)
+    for _, _, card in CATEGORY_CHECKS:
+        print("\n".join(card))
     if need:
         by = {x["id"]: x for x in ct.load(os.path.join("work", a.rid, "input-extract-detail.json"))["items"]}
         print("NEED_VALUE 以下派生属性需要你按本次属性 label/comment 和规则含义判断后用 set 提交（推不出就不提交，保持 unfilled）：")
