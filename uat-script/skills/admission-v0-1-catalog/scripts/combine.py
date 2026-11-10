@@ -1233,53 +1233,10 @@ def enum_check(key, pd, value, rules):
         for c, l in opts:
             if l and v == l:
                 return c, None
-        hit = enum_alias_pick(v, opts)
-        if hit is not None:
-            return hit[0], None
         return value, "取值「%s」不在 enum 里，不传；可选：%s" % (short(v, 30), enum_text(opts))
     if any(v == l for _, l in opts) or v in enum_literals(key, rules):
         return v, None
-    hit = enum_alias_pick(v, opts)
-    if hit is not None:
-        return hit[1], None
     return value, "取值「%s」不在 comment 列出的选项里，不传；可选：%s" % (short(v, 30), enum_text(opts))
-
-
-ENUM_ALIASES = {k: list(v) for k, v in ct.CONFIG.get("enumAliases", {}).items()}
-PAREN_NOTE = re.compile(r"[（(][^（()）]*[)）]")
-
-
-def alias_in(w, f):
-    """w 在 f 里出现且前面不紧跟否定字（「未注销」不算注销，「非基本户」里的「基本户」不算基本户）。"""
-    i = f.find(w)
-    while i >= 0:
-        if i == 0 or f[i - 1] not in "未不无非没":
-            return True
-        i = f.find(w, i + 1)
-    return False
-
-
-def enum_alias_pick(v, opts):
-    """v42：原文与选项不逐字相同时的受控归一（am：「注销」→已注销、「基本存款账户」→基本户、「有限责任公司(自然人独资)」→有限公司）。
-    去空格与括号注释后，按选项中文名、编码及 combine_config.json 的 enumAliases 做整词/包含匹配；
-    被另一命中词包含的较短词让位（「股份有限公司」里的「有限公司」不算）；只有唯一选项命中才返回 (编码, 中文)，否则 None。"""
-    raw = re.sub(r"\s+", "", v)
-    forms = list(dict.fromkeys([raw, PAREN_NOTE.sub("", raw)]))
-    forms = [f for f in forms if f]
-    hits = {}                               # 选项序号 → 命中的最长词
-    for i, (c, l) in enumerate(opts):
-        words = [w for w in [l, c] + ENUM_ALIASES.get(l or "", []) if w and len(w) >= 2]
-        for f in forms:
-            for w in words:
-                if f == w or alias_in(w, f):
-                    if len(w) > len(hits.get(i, "")):
-                        hits[i] = w
-    if not hits:
-        return None
-    keep = [i for i, w in hits.items() if not any(w != w2 and w in w2 for w2 in hits.values())]
-    if len(keep) != 1:
-        return None
-    return opts[keep[0]]
 
 
 def key_uses(key, rules):
@@ -1871,11 +1828,7 @@ def build(rid, rules, props, sets, spec_in):
             notes_unfilled.append((k, "R10", bad))
             type_dropped.append((k, bad))
             continue
-        before_enum = value
         value, bad = enum_check(k, pd, value, rules) if not is_fixed else (value, None)
-        if not bad and isinstance(before_enum, str) and value != before_enum:
-            raw0 = main["value"] if k not in sets else before_enum
-            vsrc += "；枚举原文「%s」按同义归一为选项" % raw0
         if bad:                          # am8：把「有限责任公司」「基本户」「true」传给枚举键，规则按编码比较，等于传了错值
             add_unfilled(k, "R10")
             notes_unfilled.append((k, "R10", bad))
@@ -2029,18 +1982,6 @@ def cmd_build(a):
     checks = review_checks(a.rid)
     for k, msg, _ in CATEGORY_CHECKS:
         checks.append("CATEGORY_SIGNAL %s｜%s" % (k, msg))
-    # v42：规则引用的枚举键取值被丢弃时先拦一次，要求按选择题重选或明确 skip（am 220：「注销」被丢，注销拦截规则跳过，结论降为转人工）。
-    # 同一个键只拦一次：再被丢弃就按软项放行，不让 build 循环。
-    gate_fp = os.path.join("work", a.rid, "build-gate.json")
-    prev_gate = ct.load(gate_fp) if os.path.isfile(gate_fp) else {}
-    enum_blocked = list(prev_gate.get("enumBlocked", []))
-    for k, why in enum_dropped:
-        if k in enum_blocked:
-            continue
-        enum_blocked.append(k)
-        checks.append("ENUM_CHOICE %s｜%s｜原文已取到但不是选项：按选择题用 set 提交一个选项（有 enum 交编码），依据写「派生:条目ID｜选项｜置信度约N%%｜理由」；都不过半就在 skip.R10 里明确列出该键。本键只拦这一次" % (k, why))
-    with open(gate_fp, "w", encoding="utf-8") as f:     # 先落盘：之后即使因 INST_REQUIRED_MISSING 提前退出，也不会重复拦同一个键
-        json.dump({"soft": prev_gate.get("soft", []), "enumBlocked": enum_blocked}, f, ensure_ascii=False)
     for c in checks:
         print("CHECK " + c)
     for _, _, card in CATEGORY_CHECKS:
@@ -2082,8 +2023,9 @@ def cmd_build(a):
     hard = bool(checks or any(ln.startswith("ERR") for ln in lines))
     soft = sorted(["UNDECIDED " + k for k, _ in undecided] + ["TYPE_DROPPED " + k for k, _ in type_dropped] +
                   ["ENUM_DROPPED " + k for k, _ in enum_dropped] + ["NEED_VALUE " + k for k, _ in need])
+    gate_fp = os.path.join("work", a.rid, "build-gate.json")
     with open(gate_fp, "w", encoding="utf-8") as f:
-        json.dump({"soft": soft, "enumBlocked": enum_blocked}, f, ensure_ascii=False)
+        json.dump({"soft": soft}, f, ensure_ascii=False)
     if hard:
         print("GATE: BLOCKED 有 CHECK/ERR，按上面提示改完重新 build；不得调用 mcp_run_process")
     else:

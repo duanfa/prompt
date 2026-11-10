@@ -30,9 +30,6 @@ from datetime import date
 HERE = os.path.dirname(os.path.realpath(__file__))
 CAT = os.path.realpath(os.path.join(HERE, ".."))
 CONTRACT = "admission-noshell-v0-1"
-# 明细完整、复核结束后单独一行打印。WanScope 的 Agent 配置 attachment_release_marker 设为同一字符串时，
-# 此后的模型调用不再携带请求里的图片/PDF 原件，改为 inputs/ 下的保存路径（会话记录不变）。
-RELEASE_MARKER = "RELEASE_ATTACHMENTS"
 RID_OK = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 N_RE = re.compile(r"R(0[1-9]|1[0-5])｜.{4,}", re.S)
 PREFIX_RE = re.compile(r"^[YN]\s*[｜|]\s*")
@@ -54,9 +51,7 @@ GROUPS = {
 # （清单在补充材料里插入/调整条目、整体后移编号都不影响）；(名称开头, 请求附件字段, 说明)
 SUPPLEMENT_PREFIX = [(("增值税专用发票",), ["vatTaxCertUrl"], "增值税专用发票"),
                      (("上下游合同",), ["upstreamDnstreamAgmtUrl"], "上下游合同"),
-                     (("社保证明", "完税证明", "无欠税证明"), ["noTaxCertSbUrl", "vatTaxCertUrl"], "社保/完税/无欠税证明")]   # 三类证明是同一个请求参数
-# v42：vatTaxCertUrl 名义上是增值税发票，实测常上传《税收完税证明》（am 216/218–222）。两个字段都没有才整组判“未提供”；
-# 有任一字段时按材料标题归组（materials skill），不按字段名把完税证明判成未提供。
+                     (("社保证明", "完税证明", "无欠税证明"), ["noTaxCertSbUrl"], "社保/完税/无欠税证明")]   # 三类证明是同一个请求参数
 ONLINE_PREFIX = "官网/公众号"                                  # 官网类条目：名称含「可打开」「关联」各一条
 # v42：名称比较、是否在期间内、距到期天数、同栏原样带出 不再按编号写死，改由清单条目的 derive 字段声明（见 DERIVE_OPS）
 # v35：脚本里仍按编号引用的条目（A–G、J 组），用名称关键词核对；清单改了编号/名称导致对不上时 init 打印 WARN，而不是悄悄写错行
@@ -236,51 +231,6 @@ def load_json_file(path):
         return json.JSONDecoder().raw_decode(f.read().lstrip())[0]
 
 
-def repair_rows_boundary(raw, err):
-    """只补 rows 与下一个顶层字段之间缺的一个 ]；不修改任何字符串或值。
-
-    job 216 把最后一行的 ] 当成了 rows 的 ]，29 次重提仍在 notes 的冒号处报错。
-    前缀必须已是完整的三元组数组，补一个 ] 后全文必须严格可解析，才接收。
-    """
-    if not isinstance(err, json.JSONDecodeError) or err.msg != "Expecting ',' delimiter":
-        return None
-
-    def unique_object(pairs):
-        obj = {}
-        for key, value in pairs:
-            if key in obj:
-                raise ValueError("duplicate JSON key")
-            obj[key] = value
-        return obj
-
-    allowed = {"materials", "notes", "rows"}
-    for match in re.finditer(r',\s*"(?:notes|materials)"\s*:', raw):
-        if match.end() - 1 != err.pos:
-            continue
-        try:
-            prefix = json.loads(raw[:match.start()] + "]}", object_pairs_hook=unique_object)
-            if not isinstance(prefix, dict) or not prefix or list(prefix)[-1] != "rows":
-                continue
-            rows = prefix["rows"]
-            if not isinstance(rows, list) or not all(
-                isinstance(row, list) and len(row) == 3
-                and isinstance(row[0], str) and isinstance(row[2], str) for row in rows
-            ):
-                continue
-            obj = json.loads(raw[:match.start()] + "]" + raw[match.start():],
-                             object_pairs_hook=unique_object)
-            if not isinstance(obj, dict) or not set(obj) <= allowed:
-                continue
-            if any(not isinstance(obj[key], dict) for key in ("materials", "notes") if key in obj):
-                continue
-            if any(obj.get(key) != value for key, value in prefix.items()):
-                continue
-            return obj
-        except ValueError:
-            continue
-    return None
-
-
 def read_stdin():
     raw = sys.stdin.read()
     if not raw.strip():
@@ -289,11 +239,6 @@ def read_stdin():
         return json.loads(raw)
     except ValueError as exc:
         err = exc
-    repaired = repair_rows_boundary(raw, err)
-    if repaired is not None:
-        print("WARN STDIN_ROWS_CLOSED rows 数组在下一顶层字段前少了一个 ]，已补齐；"
-              "所有 value/text 原样接收，本次继续执行，不要重跑")
-        return repaired
     try:                                # v33：am2 在结尾多写了一个 }，报错却只提双引号，模型删了原文里的括号重提，导致复核误判
         obj, end = json.JSONDecoder().raw_decode(raw.lstrip())
         rest = raw.lstrip()[end:].strip()
@@ -304,9 +249,7 @@ def read_stdin():
         pass
     pos = getattr(err, "pos", None)
     near = ("；出错位置附近：…%s…" % raw[max(0, pos - 30):pos + 10].replace("\n", " ")) if isinstance(pos, int) else ""
-    die("STDIN_JSON_INVALID stdin 不是合法 JSON（%s%s）。本次未写入。"
-        "只改结构符号，或把本次待提交行按材料拆成每批不超过20行；不要改动 value/text 的原文。"
-        "同一步骤连续第二次出现此错误就停止重试，按审核未完成处理，不调用规则引擎。" % (err, near))
+    die("stdin 不是合法 JSON（%s%s）。常见原因：结尾括号多/少、字符串里有 ASCII 双引号或反斜杠（引号改写成「」）。只改出错的符号，不要改动 value/text 的原文。" % (err, near))
 
 
 def id_numbers(text):
@@ -1367,7 +1310,6 @@ def cmd_fill(a):
     report(a.rid, doc, st)
     if not pend and not miss_mat and not errs and not gate_problems(doc, st):
         print("PASS 明细完整（%d 条，无待填）；unresolvedProperties %d 行。可以运行 combine.py build" % (len(doc["items"]), len(doc["notes"]["unresolvedProperties"])))
-        print(RELEASE_MARKER)
     sys.exit(1 if errs else 0)
 
 
@@ -1404,7 +1346,6 @@ def cmd_finish(a):
         print("FAIL 复核门禁未过：先 detail.py recheck（工商与原件识别不一致）或重提 stale 的派生行，再 finish")
         sys.exit(3)
     print("PASS 明细完整（%d 条，无待填）；unresolvedProperties %d 行" % (len(doc["items"]), len(doc["notes"]["unresolvedProperties"])))
-    print(RELEASE_MARKER)
 
 
 def cmd_show(a):
@@ -1517,7 +1458,6 @@ def cmd_recheck(a):
     report(a.rid, doc, st)
     if not pend and not miss_mat and not errs and not gate_problems(doc, st):
         print("PASS 复核完成，明细完整（%d 条，无待填）。可以运行 combine.py build" % len(doc["items"]))
-        print(RELEASE_MARKER)
     sys.exit(1 if errs else 0)
 
 
