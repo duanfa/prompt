@@ -1,11 +1,11 @@
 ---
-name: admission-v0-1-category
+name: admission-v0-3-category
 description: 按项目内容与交付要求的语义判定实际业务类别、用工场景等业务分类枚举键：先理解业务实际是什么，再对照本次定义各选项的含义单选一个，用 set 提交。不按字词匹配，不设固定优先顺序。
 metadata:
-  prompt-contract: admission-noshell-v0-1
-  prompt-version: "0.1"
+  prompt-contract: admission-noshell-v0-3
+  prompt-version: "0.3"
 ---
-# admission-noshell-v0-1 / admission-v0-1-category
+# admission-noshell-v0-3 / admission-v0-3-category
 
 # 业务分类单选（按语义判断）
 

@@ -5,7 +5,7 @@ v30：combine.py result 的漏斗 + combine.py summary（按漏斗级别校验�
 import json, os, re, shutil, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPT = os.path.join(os.path.dirname(HERE), "skills", "admission-v0-1-catalog", "scripts", "combine.py")
+SCRIPT = os.path.join(os.path.dirname(HERE), "skills", "admission-v0-3-catalog", "scripts", "combine.py")
 FX = os.path.join(HERE, "fixtures", "v30")
 
 

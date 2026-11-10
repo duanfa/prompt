@@ -1,5 +1,5 @@
 {
-"contract":"admission-noshell-v0-1",
+"contract":"admission-noshell-v0-3",
 "schema":"input-extract-detail/3",
 "routing":{"requestId":"123","domain":"demo","scene":"admission","businessKey":"123456"},
 "materials":{"bizlicUrl":["可读","名称栏：示例科技有限公司"]},

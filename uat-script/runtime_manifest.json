@@ -1,44 +1,44 @@
 {
-  "contract": "admission-noshell-v0-1",
-  "revision": "0.1",
-  "runtime_characters": 53448,
+  "contract": "admission-noshell-v0-3",
+  "revision": "0.3",
+  "runtime_characters": 56377,
   "files": [
     {
-      "path": "主提示词_v0-1_编排版.md",
-      "sha256": "f38314a211e3571755159d3d77ea244c75c7e1cd5b21d9c30fe717a201399b21"
+      "path": "主提示词_v0-3_编排版.md",
+      "sha256": "6197806cb36827c3df7534ecab24d74e190946127327e6112e2872b225eef56f"
     },
     {
-      "path": "skills/admission-v0-1-business/SKILL.md",
-      "sha256": "ced24def132a8107fa5ea365b078a0e247f7790908496bc0759577bdb58dcf2a"
+      "path": "skills/admission-v0-3-business/SKILL.md",
+      "sha256": "d5752c79847f4d57b8e7dc4a4f0f052665c97dfa740683986e05ce10fd1181db"
     },
     {
-      "path": "skills/admission-v0-1-catalog/SKILL.md",
-      "sha256": "1f3a6cace5e2d2d8fa4f10bcc36bc2abb422725dcc4c841100d99f0b401b80cd"
+      "path": "skills/admission-v0-3-catalog/SKILL.md",
+      "sha256": "525c29fd355084f2317870e411fd502df2660023a03efc5a950a1d971675c88c"
     },
     {
-      "path": "skills/admission-v0-1-category/SKILL.md",
-      "sha256": "ac42a8cbb2af8c2c3e02efd7537d2a9720db915eceef3e6daa610e46bb839aa4"
+      "path": "skills/admission-v0-3-category/SKILL.md",
+      "sha256": "e607e5954dbbb71424e44944facf691981a3caefdfd2a145b04b3dda4a10176e"
     },
     {
-      "path": "skills/admission-v0-1-discover/SKILL.md",
-      "sha256": "b7278dcaca2538b10ff50c1782397b6160188ca3e1be1bd18c88379af65c5eac"
+      "path": "skills/admission-v0-3-discover/SKILL.md",
+      "sha256": "ae1eeae2c778bef447087389ca1c16e7bfa46463d7d8feec81dc099024dc88f3"
     },
     {
-      "path": "skills/admission-v0-1-facts/SKILL.md",
-      "sha256": "d0bc2b04ec6a7d9b32052b6d0bf47f32570e104d45ba06029f451956e0814c4f"
+      "path": "skills/admission-v0-3-facts/SKILL.md",
+      "sha256": "dfa9ef0e351020896a99e75123d904ce16606c8f1613cdd45116f7b05fe1e1b4"
     },
     {
-      "path": "skills/admission-v0-1-materials/SKILL.md",
-      "sha256": "73b5653153166a62ccec6320fa3c74242ca8d7e91c402d4e91e0e9dec5e429a4"
+      "path": "skills/admission-v0-3-materials/SKILL.md",
+      "sha256": "3bc3de778a595764fb8fba4b003019eff1af89d6edde2a4117dbdc1d55a34cfd"
     },
     {
-      "path": "skills/admission-v0-1-output/SKILL.md",
-      "sha256": "51d1cbca9790054d0c418489c7682405ba6bee7c85b750933c880f57ac77f3af"
+      "path": "skills/admission-v0-3-output/SKILL.md",
+      "sha256": "58075653728708863f163f4d944d05884be71788c1e826432dae435b3e93b956"
     },
     {
-      "path": "skills/admission-v0-1-video/SKILL.md",
-      "sha256": "1644ce48d676531b6d773235e0268e4173cd528ca1a09b99850dfdf9a5442c75"
+      "path": "skills/admission-v0-3-video/SKILL.md",
+      "sha256": "6adaa8a90fd139bf5d8f1521b7600b97f62d6a18577ccb3f97879a3eaba2c2cb"
     }
   ],
-  "script_characters": 200414
+  "script_characters": 210563
 }

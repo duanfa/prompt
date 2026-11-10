@@ -187,7 +187,7 @@ def need_rule_list(data, path):
             if isinstance(f, dict):
                 print("SKIPPED %s｜%s" % (f.get("step"), f.get("reason")))
         for k in keys:
-            print("MISSING_INPUT_KEY %s（引擎自己点名要的入参键，定义里没有也要传：在 build 的 map 里写 {\"%s\":{\"ids\":[标识条目],\"force\":true}}，重跑 build、重新过审核 A 后，最多再调一次引擎）" % (k, k))
+            print("MISSING_INPUT_KEY %s（引擎自己点名要的入参键，定义里没有也要传：在 build 的 map 里写 {\"%s\":{\"ids\":[标识条目],\"force\":true}}，重跑 build 后，最多再调一次引擎）" % (k, k))
         if not keys:
             print("没有点名缺哪个入参键：不重试，按 output skill 第四节写“规则引擎执行失败”。")
         sys.exit(5)
@@ -420,7 +420,7 @@ ATTR_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*\.[a-z][a-z0-9_]*")
 QUOTE_RE = re.compile(r"「([^」]{2,})」")
 FIELD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\[\d*\])?")
 BASIS_LEN, NEXT_LEN = (4, 220), (4, 300)
-RELEASE_BASIS = (4, 6)                                   # 通过：夸资料，5 条左右
+RELEASE_BASIS = (4, 6)                                   # 通过：列举资料要点，5 条左右
 MAX_NEXT = 8
 
 
@@ -826,7 +826,7 @@ def print_need_basis(rid, doc):
     lv, L, release, at_level, other_lv = need_basis_ctx(doc)
     print("NEED_BASIS 结论级别：%s｜%s" % (L["level"], L["title"]))
     if release:
-        print("通过：没有命中需拦截/转人工的规则。依据写 %d–%d 条（约 5 条）：围绕已提交的资料，列举哪些资料真实、合规（每条指明哪份资料、哪个栏位，只写提取明细里有原文证据的）；下一步由脚本固定，不用写。" % RELEASE_BASIS)
+        print("通过：没有命中需拦截/转人工的规则。依据写 %d–%d 条（约 5 条）：围绕已提交的资料，列举已提交资料的要点（每条指明哪份资料、哪个栏位，只写提取明细里有原文证据的；不写“真实/合规/已核实”）；下一步由脚本固定，不用写。" % RELEASE_BASIS)
     else:
         print("命中该级别的规则（依据必须逐条覆盖：先用自己的话说清 comment 的要求，再举本次资料里触发它的证据；"
               "条件与 comment 对不上时如实写“因…触发，需人工复核”，不认定 comment 里的事实；ruleId|ruleName|reason|comment 全文|条件）：")
@@ -946,7 +946,7 @@ def cmd_summary(a):
     """按漏斗级别渲染 summary（结论 / 依据 / 下一步，有事项时加注意段）。
     结论由脚本按引擎结果生成；依据和下一步由你写、脚本校验：
       拦截 / 建议拦截 / 转人工：依据围绕该级别命中规则的 comment 举证（每条命中规则至少出现一次），下一步结合提交资料写；
-      通过：没有命中需处置的规则，依据写 4–6 条夸已提交资料真实合规，下一步由脚本固定；
+      通过：没有命中需处置的规则，依据写 4–6 条列举已提交且有原文证据的资料要点，下一步由脚本固定；
       无结论（没有已判定规则/命中级别都不识别）：脚本直接渲染，不用写草稿。"""
     if a.file:                                   # 兼容：给了原始返回就先重新生成 hit-rules.json
         save_hits(a.rid, make_hits(a.file, a.rid))

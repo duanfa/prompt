@@ -161,7 +161,7 @@ def split_source(src):
 
 def render_combine(cb):
     """把 combine 字典渲染成“每个属性一行”的紧凑格式（与 facts skill 的示例一致，便于 Edit）。"""
-    lines = ['{\n"contract":"admission-noshell-v0-1",\n"schema":"input-combine/3",\n"routing":%s,\n"refKeys":%s,\n"rulesDropped":%s,\n"entities":{' % (jl(cb["routing"]), jl(cb["refKeys"]), jl(cb.get("rulesDropped", [])))]
+    lines = ['{\n"contract":"admission-noshell-v0-3",\n"schema":"input-combine/3",\n"routing":%s,\n"refKeys":%s,\n"rulesDropped":%s,\n"entities":{' % (jl(cb["routing"]), jl(cb["refKeys"]), jl(cb.get("rulesDropped", [])))]
     el = []
     for o, e in cb["entities"].items():
         pl = ",\n".join("%s:%s" % (jl(p), jl(d)) for p, d in e["properties"].items())

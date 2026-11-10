@@ -4,8 +4,8 @@
 模型不再手写全部明细行（清单条数以 extract-items-checked.json 为准）。脚本做三件事：
   init    读请求（stdin）、工商三接口返回文件、规则文件，预填「请求参数 / 工商 / 请求里根本没有的材料」这些
           不需要看图的行，并打印还要模型读材料后填写的行（id|name|desc）
-  fill    合并模型读材料得到的行、材料状态和 notes（stdin JSON）
-  finish  算派生行（成立月数、名称比较、有效期、快到期……）、生成 notes、检查还有没有待填行
+  fill    合并模型读材料得到的行、材料状态和 notes（stdin JSON），随即算派生行（成立月数、名称比较、有效期、快到期……）
+  finish  重算派生行、生成 notes、检查还有没有待填行
 
 文件 work/<requestId>/input-extract-detail.json 的格式与 v26 完全一致（id/name/desc/value/source 五字段），
 由脚本用 json 序列化，所以不会再出现“未转义双引号导致非法 JSON”。
@@ -33,7 +33,7 @@ import stdin_json as sj  # noqa: E402
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 CAT = os.path.realpath(os.path.join(HERE, ".."))
-CONTRACT = "admission-noshell-v0-1"
+CONTRACT = "admission-noshell-v0-3"
 RID_OK = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 N_RE = re.compile(r"R(0[1-9]|1[0-5])｜.{4,}", re.S)
 PREFIX_RE = re.compile(r"^[YN]\s*[｜|]\s*")
@@ -234,7 +234,7 @@ PROVINCES = ("北京", "天津", "上海", "重庆", "河北", "山西", "辽宁
              "山东", "河南", "湖北", "湖南", "广东", "海南", "四川", "贵州", "云南", "陕西", "甘肃", "青海", "内蒙古", "广西",
              "西藏", "宁夏", "新疆")
 REQ_POSITION_KEYS = ("positionName", "jobName", "posName", "postName", "position")
-# v39：营业执照经营范围里出现这些字样 → B26「是否灵工平台企业」为 true（口径取自清单 B26 的 desc）
+# v39：营业执照经营范围里出现这些字样 → B26「是否灵工平台企业」为 true（脚本内置词表）
 FLEX_PLATFORM_WORDS = ("人力外包", "灵活用工", "劳务派遣", "劳务外包", "劳务服务", "劳务中介", "劳务输出")
 
 
@@ -478,6 +478,18 @@ class Biz:
                [("%s 接口未返回" % i) for i in "DBT" if i not in self.biz]
 
 
+# 清单 J05 desc 的 B.entityStatus 编码表：B 只返回编码，转成文字后 J35/J36 才能按「注销/吊销/撤销」字样判断
+B_ENTITY_STATUS = {"1": "存续", "2": "注销", "3": "吊销", "4": "撤销", "5": "迁出", "6": "迁入", "7": "清算中", "8": "停业",
+                   "9": "其他", "10": "空", "11": "歇业", "12": "备案关闭", "13": "已取销非法人会社组织", "14": "涉嫌非法会社组织"}
+
+
+def b_status(bz):
+    v = first(bz, "B.entityStatus")
+    if v is None:
+        return None
+    return "%s（B 编码 %s）" % (B_ENTITY_STATUS[v], v) if v in B_ENTITY_STATUS else v
+
+
 def first(bz, *keys):
     for k in keys:
         v = bz.get(k)
@@ -560,7 +572,7 @@ def j_specs():
         ("J02", ["D.creditNo", "B.creditCode", "T.basic.creditcode"], lambda bz: first(bz, "D.creditNo", "B.creditCode", "T.basic.creditcode")),
         ("J03", ["D.orgCode", "B.organizationCode", "T.basic.orgcodes"], lambda bz: first(bz, "D.orgCode", "B.organizationCode", "T.basic.orgcodes")),
         ("J04", ["D.companyCode", "B.registerCode", "T.basic.regno"], lambda bz: first(bz, "D.companyCode", "B.registerCode", "T.basic.regno")),
-        ("J05", ["D.companyStatus", "B.entityStatus", "T.basic.entstatus"], lambda bz: first(bz, "D.companyStatus", "T.basic.entstatus", "B.entityStatus")),
+        ("J05", ["D.companyStatus", "B.entityStatus", "T.basic.entstatus"], lambda bz: first(bz, "D.companyStatus") or b_status(bz) or first(bz, "T.basic.entstatus")),
         ("J06", ["D.companyType", "B.entityType", "B.entType", "B.tagName", "T.basic.enttype", "T.basic.entitytype"],
          lambda bz: first(bz, "D.companyType", "B.entityType", "T.basic.enttype")),
         ("J07", ["D.legalPerson", "D.legalPersonType", "B.legalPerson", "B.legalPersonType", "T.basic.frname"],
@@ -1191,6 +1203,26 @@ def derive(doc, st):
 
 # ───────────────────────── fill / finish / show ─────────────────────────
 
+# derive() 里写死的派生行及其依据（清单 derive 声明的另由 derive_specs 给出）；A12 依据是 materials 盘点，不交给模型
+CODE_DERIVED = {"B11": ["B05", "B04"], "B16": ["B04"], "B17": ["B02"], "B18": ["B02"], "B19": ["B02"], "B26": ["B08"],
+                "J32": ["J13"], "J34": ["J01", "J02", "J07", "J09", "J10", "J13", "J16", "B01", "B03", "B06", "B04", "B05", "B07", "B08"],
+                "J35": ["J05", "J10"], "J36": ["J19", "J20", "J05"], "A12": None}
+
+
+def derived_deps(doc):
+    """脚本派生行 → 依据条目列表（None = 不交给模型填）。"""
+    ids = {x["id"] for x in doc["items"]}
+    out = {i: d for i, d in CODE_DERIVED.items() if i in ids}
+    out.update({i: d["from"] for i, d in derive_specs(load_items()).items() if i in ids})
+    return out
+
+
+def derived_ready(doc, i, deps):
+    """依据都已有结论（Y 或 N）、脚本仍没算出：才允许模型补这行（NEED_REVIEW）。"""
+    src = {x["id"]: x["source"] for x in doc["items"]}
+    return deps is not None and src.get(i, "") == "" and all(src.get(f, "") != "" for f in deps)
+
+
 def pending_rows(doc):
     return [x for x in doc["items"] if x["source"] == ""]
 
@@ -1205,18 +1237,18 @@ def report(rid, doc, st, header=False):
         print("已预填材料状态：" + "；".join("%s=%s" % (k, v[0]) for k, v in doc["materials"].items()))
     if miss_mat:
         print("MATERIALS 待填（fill 的 materials 里给 [状态, 依据]；状态：可读/不可读；依据=原件一个真实栏位原文，PDF 加页码）：" + "、".join(miss_mat))
-    specs = derive_specs(load_items())
+    specs = derived_deps(doc)
     src_of = {x["id"]: x["source"] for x in doc["items"]}
-    ready = lambda x: all(src_of.get(f, "") != "" for f in specs[x["id"]]["from"])
+    ready = lambda x: derived_ready(doc, x["id"], specs[x["id"]])
     wait = [x for x in pend if x["id"] in specs and not ready(x)]   # v42：依据还没填，脚本稍后自动算，不让模型读
     stuck = [x for x in pend if x["id"] in specs and ready(x)]      # 依据都填了脚本仍算不出（如日期读不出）：交给模型 fill，不再说“不用 fill”
     pend = [x for x in pend if x["id"] not in specs]
     if wait:
-        print("WAIT %d 行由脚本按清单 derive 声明派生，依据就绪后自动写入（不用 fill）：%s" % (
-            len(wait), "、".join("%s←%s" % (x["id"], ",".join(specs[x["id"]]["from"])) for x in wait)))
+        print("WAIT %d 行由脚本派生，依据就绪后自动写入（不用 fill）：%s" % (
+            len(wait), "、".join("%s←%s" % (x["id"], ",".join(specs[x["id"]] or ["materials"])) for x in wait)))
     if stuck:
         print("NEED_REVIEW %d 行依据已填但脚本算不出（依据原文读不出所需日期/名称），请看依据原文后用 fill 提交（不要重交依据）：%s" % (
-            len(stuck), "、".join("%s←%s" % (x["id"], ",".join("%s=%s" % (f, src_of[f]) for f in specs[x["id"]]["from"])) for x in stuck)))
+            len(stuck), "、".join("%s←%s" % (x["id"], ",".join("%s=%s" % (f, src_of[f]) for f in specs[x["id"]])) for x in stuck)))
     if pend:
         print("PENDING 待填 %d 行（id|name|desc）——读材料后用 fill 提交；取不到写 null + Rxx｜具体原因：" % len(pend))
         for x in pend:
@@ -1242,7 +1274,27 @@ def cmd_fill(a):
     pre, errs, done, autofix, skipped, sanitized, fallback = set(st["prefilled"]), [], [], [], [], [], []
     items_by = {x["id"]: x for x in load_items()}
     before = snapshot(doc)
-    for r in spec.get("rows") or []:
+    dd, held = derived_deps(doc), []
+
+    def rows_in_order():
+        """先收非派生行；再按收下的依据算一遍派生，脚本算得出的派生行不采用模型的值（依据都有结论仍算不出时才收）。"""
+        for r in spec.get("rows") or []:
+            if not a.force and isinstance(r, list) and r and r[0] in dd:
+                held.append(r)
+            else:
+                yield r
+        if not held:
+            return
+        st["derived"] = [i for i in st.get("derived", []) if i not in done]
+        derive(doc, st)
+        pre.update(st["prefilled"])
+        for r in held:
+            if derived_ready(doc, r[0], dd[r[0]]):
+                yield r
+            else:
+                derived_skip.append(r[0])
+    derived_skip = []
+    for r in rows_in_order():
         if not (isinstance(r, list) and len(r) == 3):
             errs.append("行格式应为 [id, value|null, text]: %s" % json.dumps(r, ensure_ascii=False)[:80])
             continue
@@ -1338,6 +1390,8 @@ def cmd_fill(a):
         print("TRIMMED 伪造嫌疑类条目的依据去掉了含“真实/合规/正常/可信/无异常”的分句（只写逐项看了什么）：" + "、".join(sanitized))
     if skipped:
         print("SKIP %s 已由脚本预填，不用再填，未采用你提交的值（确要覆盖请加 --force）" % "、".join(skipped))
+    if derived_skip:
+        print("SKIP %s 是脚本派生行，由脚本按依据计算，未采用你提交的值；请提交它依据的原文行（确要覆盖请加 --force）" % "、".join(derived_skip))
     for e in errs:
         print("REJECT " + e)
     if errs:

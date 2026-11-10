@@ -5,7 +5,7 @@ RunSkillScript 的脚本（detail.py / combine.py）回归：用 v25 一次真�
 import json, os, shutil, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPTS = os.path.join(os.path.dirname(HERE), "skills", "admission-v0-1-catalog", "scripts")
+SCRIPTS = os.path.join(os.path.dirname(HERE), "skills", "admission-v0-3-catalog", "scripts")
 FX = os.path.join(HERE, "fixtures", "v25_run")
 RID = "ontology_agent_job_43_115-am2"
 
@@ -710,7 +710,7 @@ class ScriptTests(unittest.TestCase):
         json.dump(props, open(pp, "w", encoding="utf-8"), ensure_ascii=False)
 
     def test_v01_empty_gate_hint_for_enum_key(self):
-        """v0.1：v01-2 有 54 单因用工场景 skip 被“为空即拦截”规则命中；plan 对该键打印 EMPTY_GATE。"""
+        """v0.3：v01-2 有 54 单因用工场景 skip 被“为空即拦截”规则命中；plan 对该键打印 EMPTY_GATE。"""
         self.ready()
         self.enum_ws()
         rp = os.path.join(self.ws, "rules.json")
