@@ -15,11 +15,11 @@ metadata:
 
 | 文件 | 用途 |
 |---|---|
-| `scripts/detail.py` | 明细脚本：`init` 预填、`fill` 合并你读材料得到的行并重算派生、`recheck` 提交二次识别结果、`compare`（只读，12 项比对）、`show`、`finish` |
+| `scripts/detail.py` | 明细脚本：`init` 预填、`fill` 合并你读材料得到的行并重算派生、`recheck` 提交二次识别结果、`verify` 提交语义校验结果（不符合再取一次）、`compare`（只读，12 项比对）、`show`、`finish` |
 | `scripts/combine.py` | 组装脚本：`plan`（只读，列出键与条目）、`build`（按你基于当次定义提交的 map/skip/set 组装并校验，生成并校验 `input-combine.json`，打印 `CHECK`，映射落盘 `work/<id>/key-map.json`）、`validate`；只读摘要 `rules`、`props`；`result`（从引擎原始返回过滤出命中规则，写 `work/<id>/hit-rules.json`，打印计数、漏斗结论和 `NEED_BASIS`）；`summary`（只读 hit-rules.json，校验依据/下一步草稿，渲染 summary，打印最终结果 `FINAL`）。**业务属性映射和判断由模型决定；脚本不设默认业务属性表或派生公式** |
 | `scripts/combine_tool.py`、`scripts/combine_config.json` | 上面两个脚本用的库和配置 |
 | `scripts/run_process_required.json` | 调 mcp_run_process 必带的预设键（四个标识 + 用工场景，无兜底）与枚举键兜底值，build 读取，你不用读 |
-| `extract-items-checked.json` | **清单（唯一数据源）**：人工核对过的全部条目（id/group/name/desc，条数以文件为准；可选 `derive` 声明派生、`notice`=[{condition,desc}] 声明 summary“注意”里的提醒——condition 由模型在 summary 草稿里按语义判断是否成立，desc 原样告知用户）。改清单只改它；脚本按条目名称归组，在补充材料里插入/调整条目不必改脚本 |
+| `extract-items-checked.json` | **清单（唯一数据源）**：人工核对过的全部条目（id/group/name/desc，条数以文件为准；可选 `derive` 声明派生、`notice`=[{condition,desc}] 声明 summary“注意”里的提醒——condition 由模型在 summary 草稿里按语义判断是否成立，desc 原样告知用户；`verify`=语义校验要求，如「不为空」，见五-7）。改清单只改它；脚本按条目名称归组，在补充材料里插入/调整条目不必改脚本 |
 
 脚本都由 RunSkillScript 运行（只用标准库）。`RunSkillScript` 报路径不存在 / 没有这个工具时按主提示词第六节“技能配置异常”处理，不得改为手写明细。
 
@@ -33,6 +33,7 @@ metadata:
 
 1. text 里**不写** `Y｜`/`N｜`：有值时 text=`来源｜证据`（脚本拼成 `Y｜来源｜证据`），取不到时 value=null、text=`Rxx｜具体原因`（脚本拼成 `N｜Rxx｜具体原因`）。
 2. **任何字符串里不得出现 ASCII 双引号和反斜杠**，引用原文引号一律写成「」或 “ ”。
+   - **stdin 写错括号/引号时的有限恢复**（fill / recheck / verify / init 都适用）：`WARN STDIN_ROWS_CLOSED`（rows 在 notes/materials 前少的 `]` 已补上）或 `WARN stdin 结尾多了…` 表示已原样收下，不要重交。`STDIN_JSON_INVALID` 表示本次没有写入：只改被点名处的结构符号，不改 value/text 原文、不改写说明；fill 下一次按材料拆成每批 ≤20 行，已写入的行不重发。**同一步骤连续第二次失败脚本打印 `STDIN_GIVE_UP`：立即停止重试**，按主提示词第六节「stdin 语法错误的有限恢复」提交审核未完成，不调用引擎。
 3. **value 是字符串或 null**：数字写 `"123"`，布尔写 `"true"` / `"false"`，日期写原文或按 desc 要求的格式，文本逐字原文。**取不到一律 `null`**（不写 `"NULL"`、空串、`"无"`、`0`、`false` 占位）。
 4. **来源与证据**：来源 = 请求字段名 / 材料中文名＋文件字段＋页码＋栏位 / 视频文件＋时间点 / 图片第几张 / `工商:<D|B|T>.<字段>` / `派生:<依据条目ID>`。证据 = 原件栏位原文、回答原话、工具字段原值，或算式＋两侧原文；只写最终事实，不含推演。PDF/图片来源必须含栏位原文（PDF 含页码），只写“显示/可读/一致”不算。取不到的具体原因点名材料、页码或工具、读到什么/没读到什么；“无”“未提供”“略”“看不清”不合格。
 5. 一个条目有多个来源时：value 取第一个成功来源（顺序 D、B、T），证据段列出各接口原值；值不一致时 value 取 null、原因码 R09，并写入 notes.conflicts。
@@ -70,3 +71,4 @@ metadata:
 4. 禁止为了让 N 变 Y 而推测；红线 3、4、5 照常适用。身份证号码不抄录（清单没有此项）；开户凭证账号（D10）按清单要求提取，**value 和 source 的证据段都完整抄录原件账号栏的账号，不脱敏、不加星号、不截断**；原件上有看不清的位数时不补全、不猜，整条按 N 处理（R03 或 R06，写明哪几位看不清）。
 5. **工商与原件识别的比对**由 `detail.py` 完成（12 项，结果写 J34 与 notes.conflicts，见 materials skill 第二步半）：不一致的项必须回看原件二次识别（`recheck`），工商值不覆盖原件识别值。
 6. 行业代码/名称只作原文事实，不映射禁入或敏感（R10）；工商没有牌照字段，**不等于没有牌照**；单位未明示不自补，原样记。
+7. **语义校验（verify）**：清单条目带 `verify` 的（如 B01/B02/B04/B05「不为空」），在**全部值取完**（无待填、无待复核）后，fill/recheck 输出 `VERIFY_ITEM ID|名称|verify=要求|当前值=…|来源=…`。逐条按 verify 的**语义**（结合 desc，例：成立日期须来自成立日期栏、不是发证日）判断当前值是否符合，用 `detail.py verify --rid <requestId>` 提交，stdin=`{"rows":[[ID,"pass","判断理由"]]}`；不符合就回看材料**再取一次值**：`[ID,"fail","不符原因",新值或null,"来源｜证据" 或 "Rxx｜原因"]`。再取后的值会再出 `VERIFY_ITEM`（标「最后校验」），仍不符合交 `[ID,"fail","原因"]`，脚本置 `N｜R06`。每项只能再取一次；空值不能判 pass「不为空」；值之后被改动（fill --force / recheck）要重新校验。未校验完，fill 不出 PASS，finish/build 被拒。

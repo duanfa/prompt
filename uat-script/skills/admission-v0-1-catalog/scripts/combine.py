@@ -31,6 +31,7 @@ import sys
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import combine_tool as ct  # noqa: E402
+import stdin_json as sj  # noqa: E402
 import detail as dt  # noqa: E402
 
 def die(msg, code=1):
@@ -827,9 +828,10 @@ def print_need_basis(rid, doc):
     if release:
         print("通过：没有命中需拦截/转人工的规则。依据写 %d–%d 条（约 5 条）：围绕已提交的资料，列举哪些资料真实、合规（每条指明哪份资料、哪个栏位，只写提取明细里有原文证据的）；下一步由脚本固定，不用写。" % RELEASE_BASIS)
     else:
-        print("命中该级别的规则（依据必须逐条覆盖，围绕 comment 举证；ruleId|ruleName|reason|comment 全文）：")
+        print("命中该级别的规则（依据必须逐条覆盖：先用自己的话说清 comment 的要求，再举本次资料里触发它的证据；"
+              "条件与 comment 对不上时如实写“因…触发，需人工复核”，不认定 comment 里的事实；ruleId|ruleName|reason|comment 全文|条件）：")
         for r in at_level:
-            print("%s|%s|%s|%s" % (r["ruleId"], r.get("ruleName"), (r.get("reason") or "")[:100], r.get("comment") or ""))
+            print("%s|%s|%s|%s|%s" % (r["ruleId"], r.get("ruleName"), (r.get("reason") or "")[:100], r.get("comment") or "", r.get("expression") or ""))
         print_unsent_hint(rid, at_level)
         print("下一步：%s" % NEXT_HINT[L["level"]])
     if other_lv and not release:
@@ -989,13 +991,14 @@ def cmd_summary(a):
         if not raw.strip():
             print_need_basis(a.rid, doc)
             sys.exit(4)
-        try:
-            draft = json.loads(raw)
-        except ValueError as exc:
-            if not lenient:
-                reject(["stdin 不是合法 JSON（%s）。字符串里的双引号请改写成「」。" % exc])
+        draft, n_bad = sj.read(raw, "summary", a.rid)     # 不合法时已打印 STDIN_JSON_INVALID（带连续次数）
+        if draft is None:
+            if not lenient and n_bad < sj.GIVE_UP_AFTER:
+                reject(["stdin 不是合法 JSON，见上面 STDIN_JSON_INVALID 行。只改被点名处的括号或引号，字符串里的双引号改写成「」。"])
+            lenient = True                                 # 连续第二次语法失败：不再退回，避免模型反复重交或绕过脚本
             draft = {}
             lenient_log.append("草稿不是合法 JSON，依据/下一步全部由脚本按规则说明生成")
+            print("WARN STDIN_LENIENT 草稿连续 %d 次不是合法 JSON：本次不再退回，依据/下一步由脚本按规则说明生成，不要再重交" % max(n_bad, 1))
         if not isinstance(draft, dict) or not isinstance(draft.get("basis"), list):
             if not lenient:
                 reject(['草稿应为 {"basis":[{"ruleIds":[…],"text":"…"}],"next":["…"],"analysis":["…"]}'])
@@ -1706,7 +1709,7 @@ def build(rid, rules, props, sets, spec_in):
     if os.path.isfile(st_fp):          # v29：工商与原件识别不一致必须先二次识别；模型写的派生行依据变了必须先重判
         probs = dt.gate_problems(doc, dt.load_json_file(st_fp))
         if probs:
-            die("明细未通过复核门禁，不能组装：" + "；".join(probs) + "。先运行 detail.py compare / recheck", 2)
+            die("明细未通过复核门禁，不能组装：" + "；".join(probs) + "。先运行 detail.py compare / recheck / verify", 2)
     saved_before = os.path.isfile(map_path(rid))
     mp = merge_map(load_map(rid), spec_in)
     all_rules = rules
@@ -1947,10 +1950,7 @@ def cmd_build(a):
     if not sys.stdin.isatty():
         raw = sys.stdin.read()
         if raw.strip():
-            try:
-                spec = json.loads(raw)
-            except ValueError as exc:
-                die("stdin 不是合法 JSON（%s）" % exc)
+            spec = sj.read_or_exit(raw, "build", a.rid)   # 不合法：STDIN_JSON_INVALID；连续第二次：STDIN_GIVE_UP
             for k, v in (spec.get("set") or {}).items():
                 if v is None:            # v43：null 表示撤回之前落盘的 set
                     sets[k] = None

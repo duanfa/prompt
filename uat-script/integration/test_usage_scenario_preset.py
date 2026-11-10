@@ -75,10 +75,8 @@ class UsageScenarioPresetTests(unittest.TestCase):
         self.assertNotIn("PRESET_OVERRIDE_IGNORED", out)
         self.assertNotIn("NEED_VALUE", out)
         spec["set"][TARGET][0] = ["ordinary", "sensitive"]
-        rc, out = self.build(spec)   # v42：第一次被丢弃 CHECK ENUM_CHOICE 拦一次
-        self.assertEqual(rc, 1, out)
-        self.assertIn("CHECK ENUM_CHOICE", out)
-        out, inp = self.ok(spec)
+        out, inp = self.ok(spec)     # uat：取值不是单个选项 → ENUM_DROPPED 提醒，不拦门禁
+        self.assertNotIn("CHECK ENUM_CHOICE", out)
         self.assertNotIn("usage_scenario", inp.get("Employer", {}))
         self.assertIn("ENUM_DROPPED", out)
 

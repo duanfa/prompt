@@ -17,6 +17,7 @@
   show   --rid <requestId> [--pending]
   compare --rid <requestId>                                     工商与原件识别（执照/身份证/开户凭证/租赁合同）逐项比对，列出待复核项
   recheck --rid <requestId>                                     stdin: {"rows":[[原件条目ID,二次识别值|null,text]]}  回看原件二次识别后提交，每项只能复核一次
+  verify  --rid <requestId>                                     stdin: {"rows":[[ID,"pass",理由] | [ID,"fail",原因,新值|null,text]]}  全部值取完后按清单 verify 语义校验，不符合再取一次
 rows 里 value 有值时 text 写「来源｜证据」，value 为 null 时 text 写「Rxx｜具体原因」。
 """
 import argparse
@@ -26,6 +27,9 @@ import os
 import re
 import sys
 from datetime import date
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import stdin_json as sj  # noqa: E402
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 CAT = os.path.realpath(os.path.join(HERE, ".."))
@@ -51,7 +55,8 @@ GROUPS = {
 # （清单在补充材料里插入/调整条目、整体后移编号都不影响）；(名称开头, 请求附件字段, 说明)
 SUPPLEMENT_PREFIX = [(("增值税专用发票",), ["vatTaxCertUrl"], "增值税专用发票"),
                      (("上下游合同",), ["upstreamDnstreamAgmtUrl"], "上下游合同"),
-                     (("社保证明", "完税证明", "无欠税证明"), ["noTaxCertSbUrl"], "社保/完税/无欠税证明")]   # 三类证明是同一个请求参数
+                     (("社保证明", "无欠税证明"), ["noTaxCertSbUrl"], "社保/无欠税证明"),   # 两类证明与完税证明同一个请求参数
+                     (("完税证明",), ["noTaxCertSbUrl", "vatTaxCertUrl"], "完税证明")]   # 实测 vatTaxCertUrl 里常是《税收完税证明》：两个字段都没有才判未提供
 ONLINE_PREFIX = "官网/公众号"                                  # 官网类条目：名称含「可打开」「关联」各一条
 # v42：名称比较、是否在期间内、距到期天数、同栏原样带出 不再按编号写死，改由清单条目的 derive 字段声明（见 DERIVE_OPS）
 # v35：脚本里仍按编号引用的条目（A–G、J 组），用名称关键词核对；清单改了编号/名称导致对不上时 init 打印 WARN，而不是悄悄写错行
@@ -148,6 +153,18 @@ def check_notice_specs(items):
     return bad
 
 
+def check_verify_specs(items):
+    """清单条目可带 "verify": "语义校验要求"（如「不为空」「8 位日期」「与执照名称栏一致」）。
+    全部值取完后由模型按语义逐条判断是否符合，不符合的再取一次值（detail.py verify）。"""
+    return ["%s 的 verify 须为非空字符串" % it["id"] for it in items
+            if "verify" in it and not (isinstance(it["verify"], str) and it["verify"].strip())]
+
+
+def verify_specs(items=None):
+    return {it["id"]: it["verify"].strip() for it in (items or load_items())
+            if isinstance(it.get("verify"), str) and it["verify"].strip()}
+
+
 def short_name(item):
     return item["name"].rsplit(".", 1)[-1]
 
@@ -231,25 +248,13 @@ def load_json_file(path):
         return json.JSONDecoder().raw_decode(f.read().lstrip())[0]
 
 
-def read_stdin():
+def read_stdin(step="fill", rid=None):
+    """stdin JSON 统一走 stdin_json：合法 JSON 原样接收；只补 job 216 那一种 rows 少「]」；
+    其他损坏打印 STDIN_JSON_INVALID，同一步骤连续第二次再打印 STDIN_GIVE_UP。"""
     raw = sys.stdin.read()
     if not raw.strip():
         die("stdin 为空")
-    try:
-        return json.loads(raw)
-    except ValueError as exc:
-        err = exc
-    try:                                # v33：am2 在结尾多写了一个 }，报错却只提双引号，模型删了原文里的括号重提，导致复核误判
-        obj, end = json.JSONDecoder().raw_decode(raw.lstrip())
-        rest = raw.lstrip()[end:].strip()
-        if isinstance(obj, dict) and rest and set(rest) <= set("}]"):
-            print("WARN stdin 结尾多了「%s」，已忽略；内容按原样接收，不要因此改动 value/text" % rest)
-            return obj
-    except ValueError:
-        pass
-    pos = getattr(err, "pos", None)
-    near = ("；出错位置附近：…%s…" % raw[max(0, pos - 30):pos + 10].replace("\n", " ")) if isinstance(pos, int) else ""
-    die("stdin 不是合法 JSON（%s%s）。常见原因：结尾括号多/少、字符串里有 ASCII 双引号或反斜杠（引号改写成「」）。只改出错的符号，不要改动 value/text 的原文。" % (err, near))
+    return sj.read_or_exit(raw, step, rid)
 
 
 def id_numbers(text):
@@ -379,7 +384,7 @@ def load_detail(rid):
     if not os.path.isfile(fp) or not os.path.isfile(sp):
         die("work/%s 下没有明细文件，先运行 init" % rid)
     st = load_json_file(sp)
-    for k, d in (("derived", []), ("autoConflicts", []), ("rechecked", {}), ("stale", [])):
+    for k, d in (("derived", []), ("autoConflicts", []), ("rechecked", {}), ("stale", []), ("verified", {}), ("verifyRetried", [])):
         st.setdefault(k, d)
     return load_json_file(fp), st
 
@@ -622,7 +627,7 @@ def req_get(req, key):
 
 
 def cmd_init(a):
-    spec = read_stdin()
+    spec = read_stdin("init")
     ctx, req = spec.get("ctx") or {}, spec.get("request") or {}
     for k in ("requestId", "domain", "scene"):
         if not ctx.get(k):
@@ -642,6 +647,9 @@ def cmd_init(a):
     bad = check_notice_specs(items)
     if bad:
         die("清单 notice 声明有误（extract-items-checked.json）：" + "；".join(bad))
+    bad = check_verify_specs(items)
+    if bad:
+        die("清单 verify 声明有误（extract-items-checked.json）：" + "；".join(bad))
     row = {i["id"]: {"id": i["id"], "name": i["name"], "desc": i["desc"], "value": None, "source": ""} for i in items}
     order = [i["id"] for i in items]
     pre, issues = set(), []
@@ -951,7 +959,30 @@ def gate_problems(doc, st):
     stale = list(st.get("stale") or [])
     if stale:
         probs.append("STALE 以下由模型写入的派生行，其依据行已被修改，须重新判断后用 fill --force 重提：" + "、".join(stale))
+    vp = verify_pending(doc, st)
+    if vp:
+        probs.append("VERIFY 带 verify 的条目 %d 项尚未按语义校验：%s" % (len(vp), "、".join(vp)))
     return probs
+
+
+def verify_pending(doc, st):
+    """带 verify 的条目：全部值取完（无待填、无待复核）后才校验；值变了（fill --force / recheck / 再取）之前的校验作废。"""
+    if pending_rows(doc) or recheck_pending(doc, st):
+        return []
+    done = st.get("verified") or {}
+    by = {x["id"]: x for x in doc["items"]}
+    return [i for i in verify_specs() if i in by and
+            not (i in done and done[i].get("value") == by[i]["value"] and done[i].get("source") == by[i]["source"])]
+
+
+def verify_lines(doc, st):
+    by = {x["id"]: x for x in doc["items"]}
+    specs = verify_specs()
+    retried = set(st.get("verifyRetried") or [])
+    return ["VERIFY_ITEM %s|%s|verify=%s|当前值=%s|来源=%s|%s" % (
+        i, by[i]["name"], specs[i], "(空)" if by[i]["value"] is None else by[i]["value"], by[i]["source"][:120],
+        "已再取过一次，本次是最后校验" if i in retried else "可再取一次")
+        for i in verify_pending(doc, st)]
 
 
 def snapshot(doc):
@@ -1196,11 +1227,17 @@ def report(rid, doc, st, header=False):
         print(ln)
     if recheck_pending(doc, st):
         print("→ 回看这些原件栏位（PDF 到对应页码）重新识别一次，用 detail.py recheck 提交；每项只能复核一次。工商值不得直接覆盖原件值。")
+    vl = verify_lines(doc, st)
+    for ln in vl:
+        print(ln)
+    if vl:
+        print("→ 所有值已取完，按每条 verify 的语义逐条判断当前值是否符合，用 detail.py verify 提交："
+              "符合 [ID,\"pass\",\"判断理由\"]；不符合就回看材料再取一次值 [ID,\"fail\",\"不符原因\",新值|null,\"来源｜证据\" 或 \"Rxx｜原因\"]（每项只能再取一次，再取后的值还要再校验）。")
 
 
 def cmd_fill(a):
     doc, st = load_detail(a.rid)
-    spec = read_stdin()
+    spec = read_stdin("fill", a.rid)
     by = {x["id"]: x for x in doc["items"]}
     pre, errs, done, autofix, skipped, sanitized, fallback = set(st["prefilled"]), [], [], [], [], [], []
     items_by = {x["id"]: x for x in load_items()}
@@ -1343,7 +1380,7 @@ def cmd_finish(a):
         print("FAIL 还有待填内容，补 fill 后再 finish")
         sys.exit(2)
     if gate_problems(doc, st):
-        print("FAIL 复核门禁未过：先 detail.py recheck（工商与原件识别不一致）或重提 stale 的派生行，再 finish")
+        print("FAIL 复核门禁未过：先 detail.py recheck（工商与原件识别不一致）、重提 stale 的派生行、detail.py verify（语义校验），再 finish")
         sys.exit(3)
     print("PASS 明细完整（%d 条，无待填）；unresolvedProperties %d 行" % (len(doc["items"]), len(doc["notes"]["unresolvedProperties"])))
 
@@ -1387,7 +1424,7 @@ def cmd_recheck(a):
     二次识别 ≠ 首次且 ≠ 工商 → 两次识别不一致：该项置 N R06，不取值；
     二次识别仍无法确认（value=null）→ 该项置 N，不取值。"""
     doc, st = load_detail(a.rid)
-    spec = read_stdin()
+    spec = read_stdin("recheck", a.rid)
     by = {x["id"]: x for x in doc["items"]}
     pairs = {p[0]: p for p in PAIRS}
     status = {p[0]: p[4] for p in pair_rows(doc)}
@@ -1461,6 +1498,122 @@ def cmd_recheck(a):
     sys.exit(1 if errs else 0)
 
 
+def cmd_verify(a):
+    """带 verify 的条目在全部值取完后按语义校验（由模型判断，脚本只记录和执行再取值）。
+    pass  → 记录校验通过（绑定当前值；值之后再被改动则需重新校验）；
+    fail  → 回看材料再取一次值，按 fill 的规则写入，新值仍需再校验；每项只能再取一次；
+    已再取过仍 fail → 有值的置 N R06（不符合 verify 不取值），已是 null 的保留原因码并追加校验记录。"""
+    doc, st = load_detail(a.rid)
+    spec = read_stdin("verify", a.rid)
+    by = {x["id"]: x for x in doc["items"]}
+    items_by = {x["id"]: x for x in load_items()}
+    specs = verify_specs()
+    pend = set(verify_pending(doc, st))
+    before = snapshot(doc)
+    errs, done, changed, lines = [], [], [], []
+    if not pend:
+        if pending_rows(doc) or recheck_pending(doc, st):
+            die("还有待填行或待复核项，值没取完，先 fill / recheck 再 verify", 2)
+    for r in spec.get("rows") or []:
+        if not (isinstance(r, list) and len(r) in (3, 5) and isinstance(r[0], str)):
+            errs.append("行格式应为 [ID,\"pass\",理由] 或 [ID,\"fail\",原因,新值|null,text]: %s" % json.dumps(r, ensure_ascii=False)[:80])
+            continue
+        i, verdict, why = r[0], r[1], r[2]
+        if i not in specs:
+            errs.append("%s 没有 verify 声明，不用校验（需校验：%s）" % (i, "、".join(specs)))
+            continue
+        if i not in pend:
+            errs.append("%s 当前值已校验过，不用再交" % i)
+            continue
+        if verdict not in ("pass", "fail") or not isinstance(why, str) or len(why.strip()) < 4:
+            errs.append("%s 的结论须为 pass/fail，理由至少 4 个字" % i)
+            continue
+        why = why.strip()
+        x = by[i]
+        if verdict == "pass":
+            if len(r) != 3:
+                errs.append("%s 判 pass 时只交 [ID,\"pass\",理由]" % i)
+                continue
+            if x["value"] is None and re.search(r"不为空|非空|必须有值|必填", specs[i]):
+                errs.append("%s 当前值为空，不符合 verify「%s」，不能判 pass；回看材料再取一次（fail 行）" % (i, specs[i]))
+                continue
+            st["verified"][i] = {"verdict": "pass", "reason": why, "value": x["value"], "source": x["source"]}
+            lines.append("%s 通过" % i)
+            done.append(i)
+            continue
+        retried = i in st["verifyRetried"]
+        if retried:                                   # 再取过仍不符合：不再取值
+            if len(r) != 3:
+                errs.append("%s 已再取过一次，不能再取；仍不符合只交 [ID,\"fail\",原因]" % i)
+                continue
+            if x["value"] is not None:
+                x["value"], x["source"] = None, "N｜R06｜两次取值均不符合校验「%s」（%s；末次值「%s」），不取值" % (specs[i], why, x["value"])
+                changed.append(i)
+            else:
+                x["source"] += "；校验「%s」再取后仍未通过：%s" % (specs[i], why)
+            st["verified"][i] = {"verdict": "fail", "reason": why, "value": x["value"], "source": x["source"]}
+            lines.append("%s 再取后仍不符合，%s" % (i, "已置 N R06" if i in changed else "保留 N"))
+            done.append(i)
+            continue
+        if len(r) != 5:
+            errs.append("%s 判 fail 时须回看材料再取一次：[ID,\"fail\",不符原因,新值|null,\"来源｜证据\" 或 \"Rxx｜原因\"]" % i)
+            continue
+        v, text = r[3], r[4]
+        if not isinstance(text, str) or not text.strip():
+            errs.append("%s 的 text 为空" % i)
+            continue
+        text = PREFIX_RE.sub("", text.strip(), count=1)
+        if id_numbers(text) or id_numbers(v if isinstance(v, str) else ""):
+            errs.append("%s 含身份证号码：不抄录身份证号码" % i)
+            continue
+        if v is None:
+            if not N_RE.fullmatch(text):
+                errs.append("%s 再取仍取不到时 text 须为「Rxx｜具体原因」；你写的是：%s" % (i, text[:60]))
+                continue
+            src = "N｜" + text
+        else:
+            if isinstance(v, bool):
+                v = "true" if v else "false"
+            elif isinstance(v, (int, float)):
+                v = str(v)
+            elif not isinstance(v, str) or v == "":
+                errs.append("%s 的新值须为非空字符串或 null" % i)
+                continue
+            if "｜" not in text:
+                fixed = fix_source(text) or (default_source(items_by.get(i, {})) and "%s｜%s" % (default_source(items_by[i]), text))
+                if not fixed:
+                    errs.append("%s 有值时 text 须为「来源｜证据」" % i)
+                    continue
+                text = fixed
+            src = "Y｜" + text
+        first = x["value"]
+        x["value"], x["source"] = v, src + "；校验：首次值「%s」不符合「%s」（%s），已再取一次" % (
+            "(空)" if first is None else first, specs[i], why)
+        st["verifyRetried"].append(i)
+        st["verified"].pop(i, None)                  # 新值还要再校验一次
+        changed.append(i)
+        done.append(i)
+        lines.append("%s 已再取，待再校验" % i)
+    if changed:
+        st["modelFilled"] = sorted(set(st.get("modelFilled") or []) | set(changed))
+        st["derived"] = [i for i in st.get("derived", []) if i not in changed]
+        for o, b, _, _ in PAIRS:
+            if o in changed or b in changed:
+                st["rechecked"].pop(o, None)
+    pend_rows, miss_mat = finalize(a.rid, doc, st)
+    mark_stale(doc, st, before, changed)
+    save_state(a.rid, st)
+    for e in errs:
+        print("REJECT " + e)
+    if lines:
+        print("校验结果：" + "；".join(lines))
+    print("已处理 %d 项，被拒 %d 项" % (len(done), len(errs)))
+    report(a.rid, doc, st)
+    if not pend_rows and not miss_mat and not errs and not gate_problems(doc, st):
+        print("PASS 语义校验完成，明细完整（%d 条，无待填）。可以运行 combine.py build" % len(doc["items"]))
+    sys.exit(1 if errs else 0)
+
+
 # ---- 参数防呆（RunSkillScript 不是 shell，模型偶尔把整条命令连同大量换行塞进 args 的一项） ----
 def _packed(x):
     return x != x.strip() or any(ord(ch) < 32 for ch in x) or re.search(r"\s-{1,2}[A-Za-z]", x) is not None
@@ -1496,7 +1649,7 @@ class ArgParser(argparse.ArgumentParser):
               "把原话记入 toolIssues，按“技能配置异常”处理")
         sys.exit(2)
 
-USAGE = 'init --biz <工商文件>... --rules <规则文件>...（init 不带 --rid，requestId 从 stdin ctx 取）；fill/finish/show/compare/recheck --rid <requestId>；例 args=["init","--biz","文件1","文件2","文件3","--rules","规则文件1","机构规则文件"]'
+USAGE = 'init --biz <工商文件>... --rules <规则文件>...（init 不带 --rid，requestId 从 stdin ctx 取）；fill/finish/show/compare/recheck/verify --rid <requestId>；例 args=["init","--biz","文件1","文件2","文件3","--rules","规则文件1","机构规则文件"]'
 
 
 def main():
@@ -1519,12 +1672,14 @@ def main():
     c.add_argument("--rid", required=True)
     rc_ = sp.add_parser("recheck")
     rc_.add_argument("--rid", required=True)
+    vf = sp.add_parser("verify")
+    vf.add_argument("--rid", required=True)
     a = ap.parse_args(repair_argv(sys.argv[1:], "detail.py", USAGE))
     for k in ("biz", "rules"):  # 多文件参数：逗号拼接也拆开（路径不含逗号）
         if isinstance(getattr(a, k, None), list):
             setattr(a, k, [x.strip() for f in getattr(a, k) for x in f.split(",") if x.strip()])
     {"init": cmd_init, "fill": cmd_fill, "finish": cmd_finish, "show": cmd_show,
-     "compare": cmd_compare, "recheck": cmd_recheck}[a.cmd](a)
+     "compare": cmd_compare, "recheck": cmd_recheck, "verify": cmd_verify}[a.cmd](a)
 
 
 if __name__ == "__main__":

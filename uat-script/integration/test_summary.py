@@ -148,6 +148,20 @@ class T(unittest.TestCase):
     def part(self, s, head, nxt_head=None):
         return s.split(head + "\n")[1].split("\n\n## ")[0].split("\n")
 
+    def test_need_basis_shows_comment_and_trigger_condition(self):
+        """依据围绕 comment 写由提示词约束（不做脚本字面校验）；NEED_BASIS 同时给出 comment 全文和触发条件，便于发现两者对不上。"""
+        rule = mk("2080184341491822592-projectName", "2080184341491822592-projectName", "true", "建议拦截",
+                  comment="企业本身有刑事犯罪或重大违法违规即禁入｜适用阶段：准入", src="risk")
+        rule["expression"] = "Project.project_name CONTAINS [使用的应用]"
+        eng = self.put("eng.json", [rule])
+        rc, out = self.run_("summary", "--rid", "r1", "--file", eng)
+        self.assertEqual(rc, 4, out)
+        self.assertIn("|企业本身有刑事犯罪或重大违法违规即禁入｜适用阶段：准入|Project.project_name CONTAINS [使用的应用]", out)
+        self.assertIn("先用自己的话说清 comment 的要求", out)
+        rc, out = self.summary(eng, [{"ruleIds": [rule["ruleId"]], "text": "本次资料需要进一步人工确认"}],
+                               ["请配合人工复核，说明企业及法定代表人是否存在刑事犯罪或重大违法违规记录"])
+        self.assertEqual(rc, 0, out)                 # 脚本不按字面核对 comment 覆盖
+
     def test_watch_level_writes_basis_from_hit_comments_and_improvement_next_steps(self):
         eng = self.image_ws()
         rc, out = self.run_("summary", "--rid", "r1", "--file", eng)                  # 没草稿：列出该级别命中规则的 comment 和下一步口径
@@ -314,12 +328,14 @@ class T(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.ws, "work", "r1", ".summary-tries.json")))   # 通过后计数清零
 
     def test_v38_invalid_json_also_ends_after_two_rejections(self):
+        """语法错误比内容退回收得更早：同一步骤连续第二次不是合法 JSON 就由脚本收尾（STDIN_LENIENT），不再等第三次。"""
         eng = self.image_ws()
-        for _ in range(2):
-            rc, out = self.run_("summary", "--rid", "r1", "--file", eng, stdin='{"basis": [ "next"')
-            self.assertEqual(rc, 1, out)
+        rc, out = self.run_("summary", "--rid", "r1", "--file", eng, stdin='{"basis": [ "next"')
+        self.assertEqual(rc, 1, out)
+        self.assertIn("STDIN_JSON_INVALID summary", out)
         rc, out = self.run_("summary", "--rid", "r1", "--file", eng, stdin='{"basis": [ "next"')
         self.assertEqual(rc, 0, out)
+        self.assertIn("WARN STDIN_LENIENT", out)
         s = self.final()["summary"]
         self.assertIn("## 依据\n1. 典型影视灵工场景放行并关注：", s)
         self.assertIn("## 下一步\n1. 关于“", s)
@@ -470,6 +486,20 @@ class T(unittest.TestCase):
         rc, out = self.run_("summary", "--rid", "r1", "--file", eng, stdin="{坏json")
         self.assertNotEqual(rc, 0)
         self.assertIn("不是合法 JSON", out)
+
+    def test_second_consecutive_bad_json_goes_lenient_instead_of_looping(self):
+        """job 218：summary 括号写错两次被拒后模型绕过脚本。现在第二次语法失败不再退回，依据/下一步由脚本按规则说明生成。"""
+        eng = self.image_ws()
+        rc, out = self.run_("summary", "--rid", "r1", "--file", eng, stdin='{"basis":[{"ruleIds":["RULE-BIZ-001"],"text":"x"}},{')
+        self.assertEqual(rc, 1, out)
+        self.assertIn("STDIN_JSON_INVALID summary", out)
+        self.assertIn("连续第 1 次", out)
+        self.assertNotIn("STDIN_GIVE_UP", out)
+        rc, out = self.run_("summary", "--rid", "r1", "--file", eng, stdin='{"basis":[}')
+        self.assertEqual(rc, 0, out)
+        self.assertIn("连续第 2 次", out)
+        self.assertIn("WARN STDIN_LENIENT", out)
+        self.assertIn("## 依据", self.final()["summary"])
 
     def test_incomplete_engine_result_does_not_render(self):
         eng = self.put("e.json", [mk("R-1", "x", "true", "拦截"), mk("R-1", "重复", "true", "拦截")])

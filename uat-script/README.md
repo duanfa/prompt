@@ -1,3 +1,10 @@
+## 当前修订：stdin 错误码覆盖全部子命令、NEED_VALUE 口径统一、枚举只认原值（2026-11-10，版本仍为 0.1）
+
+- **stdin 解析统一到 `scripts/stdin_json.py`**：此前本目录 `detail.py` 实际并未实现下面描述的 `STDIN_ROWS_CLOSED`/`STDIN_JSON_INVALID`（测试先行、代码未跟上），`combine.py build`/`summary` 解析失败也只有一句旧报错。现在 detail.py init/fill/recheck/verify 与 combine.py build/summary 共用：合法 JSON 原样接收；同层重名键、顶层不是对象按语法失败计；只修 fill 的 rows 少 `]` 这一种；其他一律 `STDIN_JSON_INVALID <步骤>`（带“同一步骤连续第 N 次”）。计数落盘 `work/<rid>/.stdin-failures.json`，按步骤分开，解析成功清零。连续第二次：fill/recheck/verify/init/build 打印 `STDIN_GIVE_UP`，按主提示词第六节「stdin 语法错误的有限恢复」收尾、不调用引擎；summary 打印 `WARN STDIN_LENIENT`，由脚本生成依据/下一步并照常出 FINAL。契约外的顶层键只打印 `WARN STDIN_UNKNOWN_KEY` 并忽略（不新增拒绝）。
+- **discover skill 第 38 行**改为与主提示词第 7 条、output skill 一致：用工场景 NEED_VALUE 只提醒、不拦门禁，`GATE: READY` 即调引擎。
+- **枚举不做关键词/同义归一**：本目录 combine.py 没有 `enum_alias_pick`，`enum_check` 只认与编码或中文选项完全一致的值；原文→选项由模型按语义判断后 set 提交。测试里依赖同义归一的断言已改为“不归一”（「公司不从事集资」「为客户提供理财产品推广服务」「营业期限至2030年到期」「即将到期」「基本存款账户」均不归一）。
+- catalog `Archive.zip`（新增 `scripts/stdin_json.py`，不含 `__MACOSX`/`.DS_Store`）、discover/output `SKILL.md.zip` 重打包；`runtime_manifest.json` 重算（runtime 54,388 → 54,861，script 194,863 → 204,087，script 按 scripts/*.py 计）。**仅本地验证，未部署。**
+
 ## 当前修订：job 216 的 stdin 括号错误恢复与有限重试（2026-11-10，版本仍为 0.1）
 
 216 连续 29 次 fill 都因 rows 数组在 notes 前少一个 `]` 失败，模型反复改写最后一行说明，错误结构没有变化。`detail.py` 现在只在完整三元组数组、顶层契约、无重名键和全文解析均通过时补这个括号；所有 value/text 保持原样，打印 `WARN STDIN_ROWS_CLOSED` 并继续处理。其他损坏仍拒绝，打印稳定错误码 `STDIN_JSON_INVALID`。主提示词与 catalog skill 规定有限恢复或拆分小批提交，同一步骤连续第二次语法失败即提交审核未完成。

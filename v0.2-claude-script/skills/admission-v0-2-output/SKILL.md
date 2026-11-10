@@ -1,0 +1,100 @@
+---
+name: admission-v0-2-output
+description: build 通过脚本检查后调用规则引擎；combine.py result 给出漏斗结论和写草稿要的内容，combine.py summary 校验草稿并输出最终结果一行 FINAL，原样提交。
+metadata:
+  prompt-contract: admission-noshell-v0-2
+  prompt-version: "0.2"
+---
+# admission-noshell-v0-2 / admission-v0-2-output
+
+# 引擎调用与最终输出
+
+## 一、调引擎前的检查（脚本做，不另开审核轮）
+
+v37 起不再有审核 A / 审核 B 的独立轮次。能机械核对的都在脚本里：
+
+- `combine.py build`：validate（JSON、标识、键数闭合、value_source、清单条目齐全、机构自定义规则引用的必填属性均进入 input）+ `CHECK` 行（“是否有伪造嫌疑”类条目的依据含“真实/合规/正常/可信/无异常”断言、E05 的值不是 true/false）+ `COMPARE_SUMMARY`（工商与原件比对，“待复核”须为 0）。
+- `detail.py fill`：伪造嫌疑类条目写入时自动去掉含断言的分句（`TRIMMED`）；工商与原件不一致时要求 `recheck`。
+- `combine.py summary`：结论、覆盖、条数、「」引文出自提交资料、不含规则 ID/英文属性名。
+
+build 最后打印 `GATE: READY`（`validate: OK` 且没有 `CHECK`、`ERR`、`INST_REQUIRED_MISSING`，`UNDECIDED`/`TYPE_DROPPED`/`ENUM_DROPPED`/`NEED_VALUE` 只是提醒，已按 R10 记入 unfilled、不拦门禁），就直接进入第二节，不再改明细或重跑 build。有 `CHECK`：用 `detail.py fill --rid <id> --force` 改写被点名的行（只写逐项看了什么），再跑一次 build。有 `INST_REQUIRED_MISSING`：按本次机构规则含义补齐有证据的 map/set 后重跑；来源确实缺失时在 toolIssues 记缺失键和原因，summary 写“审核未完成：机构自定义规则所需资料不足。”，不调用 mcp_run_process，不编造值。
+
+写明细时自己守住这几条（脚本看不出）：材料来源的值要有原件栏位原文；视频“场所虚构/真实”只在视频回答有明确物理造假证据和时间点时才填；影像合格、成立月数、名称比较等派生由脚本算，不手改；“不一致”只说材料和工商各是什么，不写成伪造/虚构。
+
+## 二、引擎调用（必做，不得跳过）
+
+build 通过后，用**最近一次 `combine.py build` 输出的 `INPUT` 行**作为 request.input，原样，不改字、不重排、不用 Read 重读。本轮**不得出现 Write / Edit / 脚本调用**：
+
+```json
+{"request":{"requestId":"<网关原值>","domain":"<网关原值>","scene":"<网关原值>","businessKey":"<entpId字符串>","input":{}}}
+```
+
+通过 build 门禁后，事实少、工商失败、部分定义缺失、大量 skip 都不是跳过引擎的理由。机构规则必填输入缺失仍受第一节门禁约束。
+
+- 正常只调一次。大量 skip、“属性/对象不存在”、规则命中都**不重调、不补造值**。
+- 仅调用报错/非成功码、明确指出名称或枚举错误、明确日期格式错误时，可用 `fill --force` 修明细并重跑 build 后最多再调一次。第二次仍失败，toolIssues 写工具名、实际错误和简短原因，照常提交失败状态说明。
+- **引擎“没跑起来”也是失败，哪怕 `code=0`**：`data.ruleCheckList` 为 null、另有 `failures` 时，`combine.py result` 打印 `ENGINE_FAILED`、逐条 `FAILURE`，退出码 5；**不要再用 Read/Grep 读原始文件**。处理：
+  1. 有 `MISSING_INPUT_KEY X.y`：在 build 的 stdin 里补一条 `{"map":{"X.y":{"ids":["<对应的标识条目>"],"force":true}}}`（A01 企业 ID、A02 企业名称、A03 需求 ID、A04 机构 ID，按含义选，不确定就不补），重跑 build，再调一次引擎。只补点名的那个键。
+  2. 没有 `MISSING_INPUT_KEY`、或补传后仍是 `ENGINE_FAILED`：不再重试，toolIssues 写 `failures` 原文，summary 写“审核未完成：规则引擎执行失败，无可用规则结果。”。
+- 最终 input 必须等于最后一次成功调用的 request.input。
+
+## 三、摘要
+
+summary 固定三段：**结论 / 依据 / 下一步**；有事项时脚本加第四段 **注意**。排版由脚本统一（`combine_config.json` 的 `summaryHeadings`、`summaryStyle`）：标题带序号（`## 1 · 结论`…），结论行放引用块并加粗、前加级别图标，依据/注意为无序列表，下一步为引用块里的列表；你只交文字，不写 Markdown 记号。依据写成「要点：说明」时脚本会把要点加粗。结论、注意由脚本生成，你不写、不改；结论行和“注意”给客户看，脚本已把字段名、清单编号、原因码换成业务用语。技术细节保存在命中规则明细和运行日志中。**依据**和**下一步**由你写草稿，脚本校验后渲染。
+
+**notes.conflicts 只写脚本比对不到的冲突**，每条“材料中文名、冲突字段、双方原文各一句”。**工商与执照/材料的比对（名称、信用代码、注册资本、经营范围等）脚本已经写进“注意”，不要再写进 conflicts**；只差括号全半角、空格的不算冲突。
+
+### 3.1 `combine.py result`（引擎返回后的第一步）
+
+`combine.py result --rid <requestId> --file <mcp_run_process 的落盘 path>`：从完整 `ruleCheckList` 只摘出命中（result=true）规则写入 `work/<requestId>/hit-rules.json`，打印计数、命中规则表、`FUNNEL_LEVEL`、`FUNNEL_HITS`、`FUNNEL_UNRECOGNIZED`，**并直接打印 `NEED_BASIS`**（结论级别、该级别命中规则的 comment 全文、下一步口径；还有其余级别命中时另列一段）——**据此写草稿，不用再跑一次不带 stdin 的 summary**。暂无结论时打印 `NO_DRAFT`：直接跑 `combine.py summary --rid <requestId>`（不带 stdin）。未命中、skip 的规则与摘要无关，不去看。
+
+**与客户准入无关的规则不计入结论（v39）**：build 时判定与准入无关、已抛掉的规则（`input-combine.json` 的 `rulesDropped`），result 只打印 `OUT_OF_SCOPE` 条数，不进命中表、不进漏斗、不进依据。
+
+漏斗（`combine_config.json` 的 `riskLadder`）：**拦截 > 建议拦截 > 转人工 > 通过**，只看命中规则的 riskMeasure，逐字相同才进漏斗，取最严的一级；有已判定规则但没有命中 → 通过；没有已判定规则或命中的都不识别 → 暂无结论。结论是引擎的转述，你不放宽也不加严。
+
+### 3.2 写草稿
+
+**summary 是给客户（申请企业的经办人）看的**，不是给技术人员看的。写之前先想：对方没看过我们的系统，读完能不能明白“哪里有问题、要怎么做”。
+
+- **用业务用语，不用技术话术**：不说属性、字段、枚举、编码、引擎、入参、映射、派生、原因码、清单条目、提取明细、结果类、漏斗、true/false、skip、null。
+- **不出现任何代号**：清单编号、原因码、英文字段名或变量名、规则 ID、工具名一律不写；要指某项资料就写它的中文名称。
+- **短句、直说**：一句讲一件事，先说结果再说原因；“下一步”用“请……”开头，说清补什么、改什么、怎么证明。
+- **系统没能判断的，不怪对方没填**：明细里有原文、只是系统没能自动归类的，写“已提交相关信息，需人工确认”。
+
+脚本会检查（见 3.3）：依据、下一步、analysis 里（「」原文之外）出现上述代号或技术词就退回，并提示该改成什么说法。
+
+| 漏斗卡在 | 依据 | 下一步 |
+|---|---|---|
+| **拦截** | 围绕命中该级别规则的 comment 列举并举证 | 结合提交资料和规则 comment，告诉对方**怎么改正** |
+| **建议拦截** | 同上 | **转人工核验**；告诉对方怎么降低风险点 |
+| **转人工** | 同上 | **转人工核验**；怎么降低违规嫌疑、补什么佐证、怎么提高不足点 |
+| **通过** | 围绕提交的资料夸哪些真实合规，4–6 条 | 脚本固定，不用写 |
+
+```
+{"basis":[{"ruleIds":["规则ID"],"text":"一句中文"}, …],"next":["一句中文", {"ruleIds":["其余级别的规则ID"],"text":"一句中文"}, …],"notice":[{"id":"条目ID","condition":"条件原文"}, …],"analysis":["一句中文", …]}
+```
+
+1. **依据只写结论级别的命中规则**，每条至少出现一次；不增补 comment 里没有的原因。
+2. **通过级依据不绑规则**，只夸提取明细里有 `Y｜` 原文证据的内容，不写 `next`。
+3. **下一步**（非通过级）1–8 条，具体可操作，结合本次资料和 comment；**只说规则和资料能支持的事**：不猜对方该填什么类别，不加规则里没有的要求，不写追问。其余级别的命中规则每条都要有一条带 `ruleIds` 的事项，按它自己级别的口径写。同一风险点只写一条。**`next` 只写要对方去做的事**：已满足、已通过、未命中的规则不写进 `next`，也不能把它们的 ID 放进 `ruleIds`（`ruleIds` 只能是 NEED_BASIS 列出的结论级别或其余级别的命中规则 ID）；“XX 已满足 / 此项已通过”这类话一律不写——写了会被 `ERR next[N] 的 ruleId 不是本次命中的…` 退回。
+4. **text**：依据 4–220 字、下一步 4–300 字，一句话；不含规则 ID、英文属性名、清单编号、原因码、技术词、【】；引用原文放「」里逐字（可用…省略）。**「」里只抄 NEED_BASIS 列出的“可放进「」的原文”或提取明细里 `Y｜` 行的原文**，不自己概括、拼接或补字；拿不准就不加「」，用自己的话说。
+5. 不放 notes 里才有的事项（材料冲突、工具异常），“注意”段会处理。
+6. **analysis（agent全局分析，仅供参考，可选，0–3 条，每条 6–200 字一句话）**：脚本把它拼成“注意”的最后一条，开头标“agent全局分析（仅供参考）：”。写**规则没有覆盖或没能判定、但审核人应该留意的问题或建议**。只写提取明细里有依据的现象，用“疑似…/建议核实…”，不下违规结论、不改结论、不重复依据和下一步已写的事；不含规则 ID、英文属性名；没有就不写。不合格的条目只会被丢弃（`ANALYSIS_DROPPED`），不会退回；代号会先被脚本换成中文说法。
+7. **灵工受限行业的例外提醒（v39，脚本写）**：企业属灵工受限行业，但本次招聘的是临时辅助岗位、且岗位内容不涉及本行业业务时，脚本在“注意”里自动加一条可按灵活用工承接、建议人工核实的提醒（`result`/`summary` 打印 `FLEX_JOB`）。它只是提醒，**不改结论**；你不要在 analysis 里重复写。命中行业类规则时，下一步可以请对方补一份岗位说明（工作内容、地点、时长，说明不涉及本行业业务），供人工核实。传销、违法灰产类行业没有例外。
+8. **notice（清单条目的“注意”提醒，v42）**：清单里带 `notice` 的条目，`result`/`summary` 在 `NOTICE` 段列出本次值和可选条件（`condition=>告知内容`）。**按语义判断**哪条 condition 成立（condition 有时是值，如 `true`/`false`，有时是文字描述），成立的写进 `notice`：`[{"id":"B15","condition":"false"}]`，condition 逐字抄清单原文；都不成立写 `[]`。脚本把该条的 desc 原样放进“注意”，你不用写这句话。**notice 是依据/下一步的补充：依据或下一步已经说过同一件事的不要选**，analysis 也不要再写。不合格的条目只丢弃（`NOTICE_DROPPED`），不退回；不写 `notice` 字段时脚本按“字面预判”（值与 condition 相同）处理。
+
+### 3.3 `combine.py summary --rid <requestId>`（草稿放 stdin）
+
+- 通过：打印 `OK …`、`SUMMARY`，以及 **`FINAL {…}`**——脚本拼好的最终结果（input = 最近一次 build 的 input-combine.json，即调引擎时的 INPUT；notes = 最近一次 build 的 notes；summary；弯引号已统一成「」），同时写 `work/<requestId>/final-output.json`。
+- 不通过：打印 `ERR …` 退出 1。v39 起“要写给客户看，用业务用语”也会退回：按提示把代号、技术词换成中文业务说法。**只改被点名的条目**，其余原样再提交；引文被拒时 ERR 会给出“最接近的原文”，逐字抄其中一段，或去掉「」改用自己的话，**不要只改标点再试**。
+- **被拒 2 次后，第 3 次提交由脚本收尾**：不合格的条目直接丢弃，缺的依据/下一步用规则名称和说明补齐（打印 `LENIENT …`），一定打印 `FINAL`。所以 summary 最多跑 3 次，不要再多。stdin 不是合法 JSON 也按被拒计数；**没有 `FINAL` 不得调用 GenerateStructuredOutput，也不得自己拼最终结果**（v44：job 218 两次被拒后自拼提交，摘要未经校验）。退出 3 = 引擎结果不完整，按第四节。
+
+## 四、提交
+
+- **GenerateStructuredOutput 的参数 = `FINAL ` 后面那个 JSON，原样**：不改字、不重排、不改标点、不增删字段。单独调用一次，成功即结束。
+- 引擎失败需要在 notes.toolIssues 追加错误时：在 FINAL 的 notes.toolIssues 末尾追加一条，其余不动。
+- 成功返回但没有已判定规则（全部 skip）：`NO_DRAFT` → `combine.py summary`，结论为“暂无结论｜无已判定（true/false）的规则”，不给通过。
+- 引擎执行失败：summary 写“审核未完成：规则引擎执行失败，无可用规则结果。”，input、notes 用最近一次 build 的 `INPUT`、`NOTES` 行。
+- 摘要反复校验失败或退出 3：input、notes 同上，summary 写“规则引擎已执行，摘要未完成：结果覆盖或一致性校验未通过。”。
+- 缺 domain/scene，或规则/属性工具整体失败且重试用尽：不发残缺引擎请求，toolIssues 第一条“审核未完成：规则引擎未执行（失败步骤及实际错误）”，input 只保留已确认的标识，summary 写“审核未完成：规则引擎未执行，无规则结果可汇总。”。
+- 最终仅 input、notes、summary，不得添加其他字段。没有该工具时按主提示词第六节处理。
