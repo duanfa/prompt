@@ -33,7 +33,7 @@ import stdin_json as sj  # noqa: E402
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 CAT = os.path.realpath(os.path.join(HERE, ".."))
-CONTRACT = "admission-noshell-v0-1"
+CONTRACT = "admission-noshell-v0-1-1"
 RID_OK = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 N_RE = re.compile(r"R(0[1-9]|1[0-5])｜.{4,}", re.S)
 PREFIX_RE = re.compile(r"^[YN]\s*[｜|]\s*")

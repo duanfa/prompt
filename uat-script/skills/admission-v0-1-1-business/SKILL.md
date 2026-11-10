@@ -1,11 +1,11 @@
 ---
-name: admission-v0-1-business
+name: admission-v0-1-1-business
 description: 对本次申报主体调用三个工商工具一次，保留可映射事实和冲突；空值不当事实，缺字段不当否定。
 metadata:
-  prompt-contract: admission-noshell-v0-1
-  prompt-version: "0.1"
+  prompt-contract: admission-noshell-v0-1-1
+  prompt-version: "0.1.1"
 ---
-# admission-noshell-v0-1 / admission-v0-1-business
+# admission-noshell-v0-1-1 / admission-v0-1-1-business
 
 # 工商核验
 

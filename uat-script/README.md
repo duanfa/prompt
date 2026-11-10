@@ -1,4 +1,4 @@
-## 当前修订：业务分类改为纯语义判断，去掉全部硬性规则（2026-11-11，版本仍为 0.1）
+## 当前修订：业务分类改为纯语义判断，去掉全部硬性规则（2026-11-11，版本仍为 0.1.1）
 
 - **category skill 重写**：去掉固定“违法 > 擦边灰产 > 传销 > 金融 > 高危 > 私域微商 > 一般”的决策顺序、各选项的字面判定要点、反例清单与用工场景/经营范围对照表；改为读懂人员实际从事的业务（做什么、经手什么、怎么计酬、在哪作业），再对照本次定义各选项含义单选，几项沾边时选最能概括业务实质的一项并写明取舍。示例只说明思路，含“原文不含选项名但实质属于该类”“提到该词但只是开发/限制用途”两类。
 - **脚本去掉词表门禁**：删除 `combine_config.json` 的 `categorySignals` 词表、`combine.py` 的 `category_hits`/`category_gate`/否定句正则和 `CHECK CATEGORY_SIGNAL` 阻断、stdin 的 `categoryReview` 键。`CATEGORY_TASK` 任务卡保留，只展示原文、各选项对应的规则和提交模板，不打印“线索”；业务分类键改为按选项数（≥4，或用工场景预设键）识别，不再靠词表匹配中文名。
@@ -6,14 +6,14 @@
 - 测试：`CategorySignalGateTests` 改为 `SemanticCategoryTests`（模型按语义选的值照传、不按字词阻断、原文无选项名也可选特殊类、`categoryReview` 已退役）；全量 197 项通过。
 - category / facts / discover `SKILL.md.zip`、catalog `Archive.zip` 重打包（不含 `__MACOSX`）并与源码逐文件核对；`runtime_manifest.json` 重算（runtime 54,861 → 53,448，script 204,087 → 200,414）。**仅本地验证，未部署、未重跑远端模型。**
 
-## 当前修订：stdin 错误码覆盖全部子命令、NEED_VALUE 口径统一、枚举只认原值（2026-11-10，版本仍为 0.1）
+## 当前修订：stdin 错误码覆盖全部子命令、NEED_VALUE 口径统一、枚举只认原值（2026-11-10，版本仍为 0.1.1）
 
 - **stdin 解析统一到 `scripts/stdin_json.py`**：此前本目录 `detail.py` 实际并未实现下面描述的 `STDIN_ROWS_CLOSED`/`STDIN_JSON_INVALID`（测试先行、代码未跟上），`combine.py build`/`summary` 解析失败也只有一句旧报错。现在 detail.py init/fill/recheck/verify 与 combine.py build/summary 共用：合法 JSON 原样接收；同层重名键、顶层不是对象按语法失败计；只修 fill 的 rows 少 `]` 这一种；其他一律 `STDIN_JSON_INVALID <步骤>`（带“同一步骤连续第 N 次”）。计数落盘 `work/<rid>/.stdin-failures.json`，按步骤分开，解析成功清零。连续第二次：fill/recheck/verify/init/build 打印 `STDIN_GIVE_UP`，按主提示词第六节「stdin 语法错误的有限恢复」收尾、不调用引擎；summary 打印 `WARN STDIN_LENIENT`，由脚本生成依据/下一步并照常出 FINAL。契约外的顶层键只打印 `WARN STDIN_UNKNOWN_KEY` 并忽略（不新增拒绝）。
 - **discover skill 第 38 行**改为与主提示词第 7 条、output skill 一致：用工场景 NEED_VALUE 只提醒、不拦门禁，`GATE: READY` 即调引擎。
 - **枚举不做关键词/同义归一**：本目录 combine.py 没有 `enum_alias_pick`，`enum_check` 只认与编码或中文选项完全一致的值；原文→选项由模型按语义判断后 set 提交。测试里依赖同义归一的断言已改为“不归一”（「公司不从事集资」「为客户提供理财产品推广服务」「营业期限至2030年到期」「即将到期」「基本存款账户」均不归一）。
 - catalog `Archive.zip`（新增 `scripts/stdin_json.py`，不含 `__MACOSX`/`.DS_Store`）、discover/output `SKILL.md.zip` 重打包；`runtime_manifest.json` 重算（runtime 54,388 → 54,861，script 194,863 → 204,087，script 按 scripts/*.py 计）。**仅本地验证，未部署。**
 
-## 当前修订：job 216 的 stdin 括号错误恢复与有限重试（2026-11-10，版本仍为 0.1）
+## 当前修订：job 216 的 stdin 括号错误恢复与有限重试（2026-11-10，版本仍为 0.1.1）
 
 216 连续 29 次 fill 都因 rows 数组在 notes 前少一个 `]` 失败，模型反复改写最后一行说明，错误结构没有变化。`detail.py` 现在只在完整三元组数组、顶层契约、无重名键和全文解析均通过时补这个括号；所有 value/text 保持原样，打印 `WARN STDIN_ROWS_CLOSED` 并继续处理。其他损坏仍拒绝，打印稳定错误码 `STDIN_JSON_INVALID`。主提示词与 catalog skill 规定有限恢复或拆分小批提交，同一步骤连续第二次语法失败即提交审核未完成。
 
@@ -25,7 +25,7 @@
 
 ---
 
-## 历史修订：业务分类命中加固（2026-11-09，版本仍为 0.1）
+## 历史修订：业务分类命中加固（2026-11-09，版本仍为 0.1.1）
 
 上一条（codex）只在 facts skill 里加了分类口径。复盘 job 179/168/173（均为该版本）：模型三次都选对了（mining_underground / debt_collection / headcount_rebate），但 **173 的分类没进引擎**，传销规则没跑，只得到转人工。根因在脚本，不在模型：
 
@@ -36,15 +36,15 @@
 
 - **脚本兜底（combine.py）**：set 依据里的条目就是映射，不必另写 map；依据比 map 多时自动同步（`MAP_SYNCED`），只有同一次提交里 set 少引了 map 的条目才退回（保留防挑证据）；set 落盘（`SET_KEPT`），带依据条目值指纹，明细改了自动作废（`SET_STALE`），null 撤回、skip 同键即撤回。
 - **召回门禁**：`combine_config.json` 新增 `categorySignals`（按选项中文名匹配，不绑编码；否定句不算）。plan 对业务分类枚举键打印 `CATEGORY_TASK` 任务卡（原文、各选项触发的规则、线索、提交模板）。build 时项目内容/交付要求/项目简介/岗位名称有特殊类别线索，而该键未传、传了一般类、或传了不触发规则的选项 → `CHECK CATEGORY_SIGNAL` 阻断调用引擎；模型重选，或在 `categoryReview` 写明误报理由（≥10 字，进 toolIssues 供人工复核）。脚本只提示，不定值；选了另一个特殊类别视为模型判断，放行。
-- **新 skill `admission-v0-1-category`**：四步判定（写机制 → 按决策顺序单选：违法 > 擦边灰产 > 传销 > 金融 > 高危 > 私域微商 > 一般 → 反例自查 → 只交 set），含用工场景/经营范围分维度表和 7 个例子。facts skill 原「业务类别单选」长文移入该 skill，facts 只留指引；主提示词改为八个 skill，第 2 轮同时加载 `-category`，红线 10 与第 4 轮说明同步。
+- **新 skill `admission-v0-1-1-category`**：四步判定（写机制 → 按决策顺序单选：违法 > 擦边灰产 > 传销 > 金融 > 高危 > 私域微商 > 一般 → 反例自查 → 只交 set），含用工场景/经营范围分维度表和 7 个例子。facts skill 原「业务类别单选」长文移入该 skill，facts 只留指引；主提示词改为八个 skill，第 2 轮同时加载 `-category`，红线 10 与第 4 轮说明同步。
 
 验证：全量 172 项，170 通过；剩余 2 项为原有失败（B24、21≠18），与本次无关。新增门禁测试覆盖 18 种业务编码 + 用户反馈的理财/传销/语音陪聊原文（skip 和一般业务都被拦、正确编码放行）、任务卡、只交 set、选另一特殊类、否定句与一般业务不误拦、误报需书面复核；改写 4 项旧断言（set 不再必须重提、有线索时 skip/多选被门禁拦）。
 
-部署：WanScope 上**新增注册** skill `admission-v0-1-category`（`skills/admission-v0-1-category/SKILL.md.zip`），更新主提示词、facts / discover `SKILL.md.zip`、catalog `Archive.zip`。runtime_manifest 已重算（runtime 51,081 → 52,823，script 177,341 → 187,172）。**未部署、未重跑远端模型**；线索词表为草稿，请业务确认。
+部署：WanScope 上**新增注册** skill `admission-v0-1-1-category`（`skills/admission-v0-1-1-category/SKILL.md.zip`），更新主提示词、facts / discover `SKILL.md.zip`、catalog `Archive.zip`。runtime_manifest 已重算（runtime 51,081 → 52,823，script 177,341 → 187,172）。**未部署、未重跑远端模型**；线索词表为草稿，请业务确认。
 
 ---
 
-## 当前修订：业务类别与用工场景单选（2026-11-09，版本仍为 0.1）
+## 当前修订：业务类别与用工场景单选（2026-11-09，版本仍为 0.1.1）
 
 trace `ca1601985a15486a627b9683ad39fd08` 的项目、交付要求已明确按直接和间接发展人数计酬、多层向上返利，`actual_business_category` 却被整体记为 R10。此次定义同时有“多级分销”和“拉人头返利”，应单选 `headcount_rebate`（拉人头返利），保留合同否认该机制的冲突证据。
 
@@ -58,7 +58,7 @@ trace `ca1601985a15486a627b9683ad39fd08` 的项目、交付要求已明确按直
 
 ---
 
-## 当前修订：summary 排版（2026-11-09，版本仍为 0.1）
+## 当前修订：summary 排版（2026-11-09，版本仍为 0.1.1）
 
 需求（用户）：summary 的样式参照《风控信息报告-结构化版.html》，**只改排版格式，文字内容不改**。
 
@@ -71,7 +71,7 @@ trace `ca1601985a15486a627b9683ad39fd08` 的项目、交付要求已明确按直
 
 ---
 
-## 当前修订：名称传给引擎前统一口径、章的内容填企业名称（2026-11-09，版本仍为 0.1）
+## 当前修订：名称传给引擎前统一口径、章的内容填企业名称（2026-11-09，版本仍为 0.1.1）
 
 依据 trace `416155b0…`、`ac09911b…`：①`tax_clearance_taxpayer_name`、`tax_payment_taxpayer_name`、`social_insurance_unit_name` 传了 `true`——模型把它们 map 到「…与企业名称是否一致」条目（H29/H23/H17），而不是名称原文条目（H29-1/H23-1/H17-1）；②`lease_contract_party_b_name` 传「上海修匀软件合同专用章」；③`settlement_account_name`「…(个人独资)」与 `enterprise_name`「…（个人独资）」括号全半角不同。规则 `X != Employer.enterprise_name` 由引擎逐字比较，②③都会误命中。
 
@@ -89,7 +89,7 @@ trace `ca1601985a15486a627b9683ad39fd08` 的项目、交付要求已明确按直
 
 ---
 
-## 历史修订：派生改为清单声明的通用工具 + 回归夹具按需补齐（2026-11-09，版本仍为 0.1）
+## 历史修订：派生改为清单声明的通用工具 + 回归夹具按需补齐（2026-11-09，版本仍为 0.1.1）
 
 起因：清单加了 G12（承租方的章是否与企业名称一致）后 59 项回归失败——58 项是 G12 没有夹具答案、整张清单门禁卡住后续所有步骤，1 项是测试写死了 163 条。
 
@@ -104,9 +104,9 @@ trace `ca1601985a15486a627b9683ad39fd08` 的项目、交付要求已明确按直
 
 ---
 
-## 历史修订：run_process 必填键单独成文件、枚举键兜底（2026-11-09，版本仍为 0.1）
+## 历史修订：run_process 必填键单独成文件、枚举键兜底（2026-11-09，版本仍为 0.1.1）
 
-- 新增 `skills/admission-v0-1-catalog/scripts/run_process_required.json`：
+- 新增 `skills/admission-v0-1-1-catalog/scripts/run_process_required.json`：
   - `required`：调 `mcp_run_process` 必带的 6 个预设键（`Employer.employer_id`、`Employer.enterprise_name`、`Demand.demand_id`、`LaborAgency.agency_id`、`Agency.agency_id`、`Employer.usage_scenario`），每项写 `key`、取值条目 `item`、`soft`、`why`。**不设兜底**：请求没值就不传，只在 `notes.toolIssues` 记“必填键 X … 无值，未传给 mcp_run_process”，build 照常通过。取代 `combine_config.json` 的 `fixedItems` / `fixedIdentifiers` / `softPresets`（已删除；新文件缺失时 `combine_tool.py` 仍读旧字段）。本体改名只改这个文件。
   - `enumFallbacks`（当前为空）：规则引用的枚举键没取到值时的兜底，每项 `key`、`fallback`、`why`。只对本次规则引用、定义里有选项、且模型没给出值的键生效；兜底值过 `enum_check`（中文选项换成 enum 编码，不是选项就不传并记 toolIssues）；传入后移出 unfilled，`value_source` 记 `兜底｜run_process_required.json｜…`，打印 `FALLBACK_FILLED`，只记 `notes.toolIssues`，不进摘要。`required` 里的键写在这里无效。
 - facts skill 的“一般行业兜底”（模型按证据判断所属行业等分类键）不受影响，未改。
@@ -116,7 +116,7 @@ trace `ca1601985a15486a627b9683ad39fd08` 的项目、交付要求已明确按直
 
 ---
 
-## 历史修订：用工场景预设 + 工具报错收敛（2026-11-09，版本仍为 0.1）
+## 历史修订：用工场景预设 + 工具报错收敛（2026-11-09，版本仍为 0.1.1）
 
 依据 trace `e974ced3873959f85da0eeec26b2d462`（`ontology_agent_job_205_df_9_1`）的 3 类 `exit code: 1`：
 
@@ -137,7 +137,7 @@ trace `ca1601985a15486a627b9683ad39fd08` 的项目、交付要求已明确按直
 
 ---
 
-## 历史修订：移除调试摘要（2026-11-09，版本仍为 0.1）
+## 历史修订：移除调试摘要（2026-11-09，版本仍为 0.1.1）
 
 - 最终结构化输出仅保留 `input`、`notes`、`summary`；schema、主提示词和 output / catalog skill 同步。
 - `combine.py summary` 仅打印 `SUMMARY` 与 `FINAL`，`summary-final.json` 仅含 `summary`，不再生成调试摘要及说明段。结论、依据、下一步、有事项时的注意段保持现有逻辑；规则计数和处置级别仍保存在命中规则明细和运行日志中。
@@ -147,7 +147,7 @@ trace `ca1601985a15486a627b9683ad39fd08` 的项目、交付要求已明确按直
 
 ---
 
-## 历史修订：一般行业兜底（2026-11-09，版本仍为 0.1；用工场景部分已被上方“用工场景预设”取代）
+## 历史修订：一般行业兜底（2026-11-09，版本仍为 0.1.1；用工场景部分已被上方“用工场景预设”取代）
 
 依据 trace `d6ca22bf3aa15455fedd581b4a9f3536`（205 号）：所属行业和实际业务均已按软件开发判断为一般行业，但用工场景漏映射，触发空值拦截。
 
@@ -160,7 +160,7 @@ trace `ca1601985a15486a627b9683ad39fd08` 的项目、交付要求已明确按直
 
 ---
 
-## 历史修订：v01-2 测试问题修复——用工场景缺值拦截、95 号工具名死循环（2026-11-09，版本仍为 0.1）
+## 历史修订：v01-2 测试问题修复——用工场景缺值拦截、95 号工具名死循环（2026-11-09，版本仍为 0.1.1）
 
 依据：v39-1 / v01-2 对比（`demos/ontology_case/analysis/v39-1_vs_v01-2/`）。
 
@@ -247,7 +247,7 @@ trace `ca1601985a15486a627b9683ad39fd08` 的项目、交付要求已明确按直
 
 ---
 
-# v0.1（admission-noshell-v0-1，修订 0.1）：修 71/80 号失败的死循环；租赁合同双方盖章（新增 G11）、租赁材料错传改由提示词约定
+# v0.1.1（admission-noshell-v0-1-1，修订 0.1.1）：修 71/80 号失败的死循环；租赁合同双方盖章（新增 G11）、租赁材料错传改由提示词约定
 
 **基线：v40-claude 40-claude.1。依据：v39-1 / v40-1 同输入 63 单对比（`outputs/ontology-v39-v40-20261108/对比报告.md`），本次复核确认其结论成立：v40 准确性较好（同范围确认错误 32→16），但错误仍集中在租赁合同两类，且两版都有。**
 
@@ -287,7 +287,7 @@ trace `ca1601985a15486a627b9683ad39fd08` 的项目、交付要求已明确按直
 
 ## 部署
 
-- WanScope 上七个 skill 换成 `admission-v0-1-*`（各目录 `SKILL.md.zip`），主提示词换成 `主提示词_v0-1_编排版.md`。
+- WanScope 上七个 skill 换成 `admission-v0-1-1-*`（各目录 `SKILL.md.zip`），主提示词换成 `主提示词_v0-1-1_编排版.md`。
 
 ---
 

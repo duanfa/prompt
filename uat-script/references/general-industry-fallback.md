@@ -1,4 +1,4 @@
-# 一般行业兜底（2026-11-09，版本仍为 0.1）
+# 一般行业兜底（2026-11-09，版本仍为 0.1.1）
 
 > **已被取代（同日）**：`Employer.usage_scenario` 改为预设，build 直接取请求 projCont 原文（见 README“用工场景预设”）。下文 build 补漏、`generalIndustryFallback` 配置与 `test_industry_fallback.py` 均已删除，仅作历史记录。
 
@@ -12,8 +12,8 @@
 
 ## 范围
 
-- 修改实际部署目录 `prompt/v41-claude-script`（`admission-v0-1-*`），历史 docs 版本不回填。
-- 配置：`skills/admission-v0-1-catalog/scripts/combine_config.json` 的 `generalIndustryFallback`。
+- 修改实际部署目录 `prompt/v41-claude-script`（`admission-v0-1-1-*`），历史 docs 版本不回填。
+- 配置：`skills/admission-v0-1-1-catalog/scripts/combine_config.json` 的 `generalIndustryFallback`。
 - 回归：`integration/test_industry_fallback.py`，覆盖 trace 同类遗漏、独立枚举编码、七类特殊类别、缺分类或缺证据、显式取值/skip/待判断、无定义/无选项/无引用、类型冲突和重跑。
 - 本地验证：新增 11 项集成测试通过；`python3 -W ignore::ResourceWarning -m unittest discover -s integration -p 'test_*.py'` 共 129 项通过。catalog / facts / discover 技能包与 manifest 一并更新。
 - 本次不修改远端规则库，不改变空值规则的处置级别；本地测试不代表已部署或重跑线上任务。

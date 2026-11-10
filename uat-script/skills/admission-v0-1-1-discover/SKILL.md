@@ -1,11 +1,11 @@
 ---
-name: admission-v0-1-discover
+name: admission-v0-1-1-discover
 description: 取全本次审核规则和属性定义，建立“规则引用键”清单、视频目标和标识映射；工具失败先重试一次。
 metadata:
-  prompt-contract: admission-noshell-v0-1
-  prompt-version: "0.1"
+  prompt-contract: admission-noshell-v0-1-1
+  prompt-version: "0.1.1"
 ---
-# admission-noshell-v0-1 / admission-v0-1-discover
+# admission-noshell-v0-1-1 / admission-v0-1-1-discover
 
 # 规则与属性发现
 

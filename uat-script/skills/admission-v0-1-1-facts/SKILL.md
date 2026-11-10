@@ -1,11 +1,11 @@
 ---
-name: admission-v0-1-facts
+name: admission-v0-1-1-facts
 description: 按提取清单汇总请求、可读材料、视频和工商事实，算派生值，落盘 input-extract-detail.json，再组装 input-combine.json（含本体属性含义与引用规则）。
 metadata:
-  prompt-contract: admission-noshell-v0-1
-  prompt-version: "0.1"
+  prompt-contract: admission-noshell-v0-1-1
+  prompt-version: "0.1.1"
 ---
-# admission-noshell-v0-1 / admission-v0-1-facts
+# admission-noshell-v0-1-1 / admission-v0-1-1-facts
 
 # 事实汇总与派生
 
@@ -45,7 +45,7 @@ metadata:
 
 ### 业务类别单选
 
-实际业务类别、所属行业、用工场景等**选项是业务类别**的枚举键，按 category skill（`admission-v0-1-category`）**按语义判断**：先读懂人员实际在做什么业务，再对照本次定义各选项的含义单选一项，只交 set。不按字词匹配，不设固定的类别优先顺序；plan 打印的 `CATEGORY_TASK` 任务卡只提供原文和选项对应的规则，不替你定值。
+实际业务类别、所属行业、用工场景等**选项是业务类别**的枚举键，按 category skill（`admission-v0-1-1-category`）**按语义判断**：先读懂人员实际在做什么业务，再对照本次定义各选项的含义单选一项，只交 set。不按字词匹配，不设固定的类别优先顺序；plan 打印的 `CATEGORY_TASK` 任务卡只提供原文和选项对应的规则，不替你定值。
 
 ### 一般类选项
 
