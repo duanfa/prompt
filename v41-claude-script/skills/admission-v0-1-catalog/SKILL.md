@@ -23,6 +23,8 @@ metadata:
 
 脚本都由 RunSkillScript 运行（只用标准库）。`RunSkillScript` 报路径不存在 / 没有这个工具时按主提示词第六节“技能配置异常”处理，不得改为手写明细。
 
+`WARN STDIN_ROWS_CLOSED` 表示 rows 与下一顶层字段之间缺的一个 `]` 已补齐；值和证据保持原样，本次继续执行，不用重跑。其他语法错误返回 `STDIN_JSON_INVALID`、本次未写入：只修结构符号，或把本次待提交行按材料拆成每批不超过 20 行。成功写入的行不重发；未填完时的待填提示不算失败。同一步骤连续第二次语法失败就停止，按主提示词“stdin 语法错误的有限恢复”提交审核未完成，不调用引擎。不要反复改 value/text 附近的文字来修括号。
+
 **用工场景按定义取值**：`Employer.usage_scenario` 必填（`run_process_required.json`）。本次定义有 enum/comment 枚举选项时，用项目内容、交付要求等作依据 map/set 单选；build 保留该提交并校验编码，未提交判断时打印 NEED_VALUE。没有枚举定义才自动取 A08 项目原文，忽略改映/skip/set。请求没值不编造；业务场景与经营范围分别按 facts skill 的分类参考判断。
 
 **机构规则输入必填**：inst-list-rc-rules 返回的 model 表达式与 mcp_list_rule 的 condition 一起交给 plan/build/validate。参与审核的机构规则引用属性必须出现在 input-combine.json 的 refKeys、entities 和 input 中，并保留引用规则原文及条目证据；定义未返回也照传。属性仍按本次含义 map/set，不新增固定业务属性表。缺项时脚本报 `INST_REQUIRED_MISSING`、不输出可调用的 INPUT；unfilled 或 notFoundInDefinition 不能代替这些必填输入。

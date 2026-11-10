@@ -114,6 +114,7 @@ class ScriptTests(unittest.TestCase):
         rc, out = run(self.ws, "detail.py", "finish", "--rid", RID)
         self.assertEqual(rc, 0, out)
         self.assertIn("PASS", out)
+        self.assertEqual(out.splitlines()[-1], "RELEASE_ATTACHMENTS")   # 明细完整后最后一行单独给平台的附件释放信号
         rc, out = run(self.ws, "combine.py", "build", "--rid", RID, "--rules", "rules.json", "--props", "props.json", stdin=read("map_spec.json"))
         self.assertEqual(rc, 0, out)
         self.assertIn("validate: OK", out)
@@ -238,7 +239,7 @@ class ScriptTests(unittest.TestCase):
         self.assertIn("Employer(", out)
         # 真实引擎返回（v27 am4：199 条 = 2 true + 8 false + 189 skip；am3：17 条 true/false）
         fxd = os.path.join(HERE, "fixtures", "v27_trace_am3_am4")
-        for name, want in (("engine_run_am4.json", "已判定=10（命中 T=2，未命中 F=8 U=0）  skip=189"), ("engine_run_am3.json", "已判定=17（命中 T=2，未命中 F=15 U=0）  skip=182")):
+        for name, want in (("engine_run_am4.json", "已判定=10（命中 T=2，未命中 F=8 U=0）  skip=180"), ("engine_run_am3.json", "已判定=17（命中 T=2，未命中 F=15 U=0）  skip=173")):
             shutil.copy(os.path.join(fxd, name), self.ws)
             rc, out = run(self.ws, "combine.py", "result", "--file", name)
             self.assertEqual(rc, 0, out)
@@ -286,7 +287,7 @@ class ScriptTests(unittest.TestCase):
         out, it = self._renumbered_catalog(mutate)
         self.assertNotIn("WARN 清单与脚本", out)
         tax = [i for i in it.values() if i["name"].startswith(("社保证明", "完税证明", "无欠税证明"))]
-        self.assertEqual(len(tax), 18)
+        self.assertEqual(len(tax), 21)                         # 清单后来加了单位/纳税人名称三条（H17-1、H23-1、H29-1）
         for i in tax:
             self.assertTrue(i["source"].startswith("N｜R01｜"), i)
         for k in ("H90", "H91"):
@@ -365,17 +366,18 @@ class ScriptTests(unittest.TestCase):
         """清单新增一条声明了 derive 的条目、一条普通条目：前者脚本自动派生、不进 PENDING；后者进 PENDING；全流程照常 PASS。"""
         def mutate(items):
             pos = next(n for n, x in enumerate(items) if x["id"] == "G12") + 1
-            items.insert(pos, {"id": "G13", "group": "租赁合同", "name": "租赁合同.承租方与企业名称一致", "desc": "",
+            items.insert(pos, {"id": "G90", "group": "租赁合同", "name": "租赁合同.承租方与企业名称一致", "desc": "",
                                "derive": {"op": "same_name", "from": ["G02", "A02"]}})
-            items.insert(pos + 1, {"id": "G14", "group": "租赁合同", "name": "租赁合同.出租方名称", "desc": "合同原文"})
+            items.insert(pos + 1, {"id": "G91", "group": "租赁合同", "name": "租赁合同.出租方名称", "desc": "合同原文"})
         init_out, out, it = self._flow_with_catalog(mutate)
         self.assertIn("WAIT", init_out)
-        self.assertIn("G13←G02,A02", init_out)
-        self.assertNotIn("\nG13|", init_out)                        # 派生行不让模型读
-        self.assertIn("\nG14|", init_out)                           # 普通新条目照常列给模型
+        self.assertIn("G90←G02,A02", init_out)
+        self.assertNotIn("\nG90|", init_out)                        # 派生行不让模型读
+        self.assertIn("\nG91|", init_out)                           # 普通新条目照常列给模型
         self.assertIn("PASS", out)
-        self.assertTrue(it["G13"]["source"].startswith("Y｜派生:G02,A02｜"), it["G13"])
-        self.assertEqual(it["G14"]["source"], "N｜" + AUTO_FILL_WHY)
+        self.assertIn("\nRELEASE_ATTACHMENTS\n", out + "\n")           # fill 通过时同样打印释放信号
+        self.assertTrue(it["G90"]["source"].startswith("Y｜派生:G02,A02｜"), it["G90"])
+        self.assertEqual(it["G91"]["source"], "N｜" + AUTO_FILL_WHY)
 
     def test_v42_threshold_comes_from_the_catalog(self):
         """快到期阈值写在清单 withinDays 里：改清单即可，不改脚本。"""
@@ -467,6 +469,7 @@ class ScriptTests(unittest.TestCase):
         self.assertIn("RECHECK", out)
         self.assertIn("RECHECK_ITEM B01|名称|首次识别=" + self.MISREAD, out)
         self.assertNotIn("PASS", out)
+        self.assertNotIn("RELEASE_ATTACHMENTS", out)                       # 复核前不释放附件（还要回看原件）
         rc, out = run(self.ws, "detail.py", "compare", "--rid", RID)
         self.assertEqual(rc, 3, out)
         rc, out = run(self.ws, "detail.py", "finish", "--rid", RID)
@@ -481,6 +484,7 @@ class ScriptTests(unittest.TestCase):
         rc, out = self.recheck([["B01", self.MISREAD, self.B01_SRC + self.MISREAD]])
         self.assertEqual(rc, 0, out)
         self.assertIn("PASS", out)
+        self.assertIn("\nRELEASE_ATTACHMENTS\n", out + "\n")           # 复核完成后单独一行给平台的释放信号
         it = self.items()
         self.assertEqual(it["B01"]["value"], self.MISREAD)                # 保留原件识别值，不用工商值覆盖
         self.assertNotIn("STALE", out)                                    # 值没变，H17/H23 仍有效
@@ -696,15 +700,21 @@ class ScriptTests(unittest.TestCase):
         self.enum_ws()
         spec = json.loads(read("map_spec.json"))
         spec["map"]["Employer.lease_status"] = ["G05"]            # G05 是布尔（在租期内）——am8 里模型就是这样传了 true
-        spec["map"]["Employer.acct_kind"] = ["D02"]               # D02 是原件原文「基本存款账户」，不是 comment 选项
+        spec["map"]["Employer.acct_kind"] = ["D02"]               # D02 是原件原文「基本存款账户」：v42 按同义表归一为 comment 选项「基本户」
         rc, out = self.build(json.dumps(spec, ensure_ascii=False))
-        self.assertEqual(rc, 0, out)
-        self.assertIn("ENUM_DROPPED 2 个枚举属性的取值不是可选项", out)
+        self.assertEqual(rc, 1, out)                              # v42：枚举取值第一次被丢弃时 CHECK ENUM_CHOICE 拦一次
+        self.assertIn("CHECK ENUM_CHOICE Employer.lease_status｜", out)
+        self.assertIn("GATE: BLOCKED", out)
+        self.assertIn("ENUM_DROPPED 1 个枚举属性的取值不是可选项", out)
         self.assertIn("Employer.lease_status｜枚举键只能选一个选项，取值「True」不是选项；可选：在租期内、已过租期", out)
-        self.assertIn("Employer.acct_kind｜取值「基本存款账户」不在 comment 列出的选项里，不传；可选：基本户、一般户、其他账户", out)
+        inp = json.loads(out.split("INPUT ", 1)[1].split("\n", 1)[0])
+        self.assertEqual(inp["Employer"]["acct_kind"], "基本户")
+        rc, out = self.build(json.dumps(spec, ensure_ascii=False))   # 同一个键只拦一次：再被丢弃按软项放行
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("CHECK ENUM_CHOICE", out)
+        self.assertIn("GATE: READY", out)
         inp = json.loads(out.split("INPUT ", 1)[1].split("\n", 1)[0])
         self.assertNotIn("lease_status", inp["Employer"])
-        self.assertNotIn("acct_kind", inp["Employer"])
         self.assertIn("validate: OK", out)                        # 键数仍闭合：被丢弃的键进 unfilled
         notes = json.loads(out.split("NOTES ", 1)[1].split("\n", 1)[0])
         self.assertTrue(any("lease_status" in x and "R10" in x for x in notes["unresolvedProperties"]), notes["unresolvedProperties"])
@@ -724,10 +734,10 @@ class ScriptTests(unittest.TestCase):
         self.assertNotIn("ENUM_DROPPED", out)
         inp = json.loads(out.split("INPUT ", 1)[1].split("\n", 1)[0])
         self.assertEqual((inp["Employer"]["lease_status"], inp["Employer"]["acct_kind"]), ("expired", "基本户"))
-        bad = {"set": {"Employer.acct_kind": ["基本存款账户", "派生:D02,D04｜原文"]}}                 # set 给的值同样要过校验
+        bad = {"set": {"Employer.acct_kind": ["专用存款账户", "派生:D02,D04｜原文"]}}                 # set 给的值同样要过校验（同义表也对不上）
         rc, out = self.build(json.dumps(bad, ensure_ascii=False))
         self.assertIn("ENUM_DROPPED", out)
-        self.assertIn("取值「基本存款账户」", out)
+        self.assertIn("取值「专用存款账户」", out)
 
     def test_v41_enum_field_takes_priority_and_label_becomes_code(self):
         """v41：定义带 enum 时只认 enum；交中文选项自动换成编码；规则编码不在 enum 里时 plan 提示。"""
@@ -752,9 +762,11 @@ class ScriptTests(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         inp = json.loads(out.split("INPUT ", 1)[1].split("\n", 1)[0])
         self.assertEqual(inp["Employer"]["acct_kind"], "other")
-        for v in ("personal", "基本存款账户"):                       # 有 enum 时规则编码、原文都不算
+        for v in ("personal", "专用存款账户"):                       # 有 enum 时规则编码、对不上同义表的原文都不算
             rc, out = self.build(json.dumps({"set": {"Employer.acct_kind": [v, "派生:D02,D04｜x"]}}, ensure_ascii=False))
             self.assertIn("取值「%s」不在 enum 里，不传；可选：basic=基本户、general=一般户、other=其他账户" % v, out)
+        rc, out = self.build(json.dumps({"set": {"Employer.acct_kind": ["基本存款账户", "派生:D02,D04｜x"]}}, ensure_ascii=False))
+        self.assertEqual(json.loads(out.split("INPUT ", 1)[1].split("\n", 1)[0])["Employer"]["acct_kind"], "basic")   # v42：原文按同义表归一为编码
 
     def test_v30_non_enum_properties_are_not_checked(self):
         """只有 comment 以「枚举」开头的属性才校验，布尔/数值/日期/文本不受影响（v25 真实数据的 input 回归已覆盖）。"""
@@ -938,6 +950,23 @@ class ScriptTests(unittest.TestCase):
         rc, out = run(self.ws, "detail.py", "fill", "--rid", RID, stdin='{"rows":[["B01","x" "y"]]}')
         self.assertIn("出错位置附近", out)
         self.assertIn("不要改动 value/text 的原文", out)
+
+    def test_job216_missing_rows_bracket_is_saved_once_without_changing_evidence(self):
+        self.init()
+        raw = '{"rows":[["B01","某某有限公司","营业执照 bizlicUrl p1 名称栏｜某某有限公司"],"notes":{"conflicts":["保留原始冲突证据"],"toolIssues":[]}}'
+        rc, out = run(self.ws, "detail.py", "fill", "--rid", RID, stdin=raw)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("STDIN_ROWS_CLOSED", out)
+        row = self.detail_row("B01")
+        self.assertEqual(row["value"], "某某有限公司")
+        self.assertEqual(row["source"], "Y｜营业执照 bizlicUrl p1 名称栏｜某某有限公司")
+        self.assertIn("保留原始冲突证据", self.detail()["notes"]["conflicts"])
+        before = self.detail()
+        rc, out = run(self.ws, "detail.py", "fill", "--rid", RID,
+                      stdin='{"rows":[["B01","不应写入" "缺逗号"]]}')
+        self.assertEqual(rc, 1, out)
+        self.assertIn("STDIN_JSON_INVALID", out)
+        self.assertEqual(self.detail(), before)
 
     def test_v33_recheck_ignores_punctuation_differences(self):
         self.ready()
@@ -1220,6 +1249,77 @@ class ArgsGuardTests(unittest.TestCase):
             self.assertIn("ERROR INVALID_SCRIPT_ARGS", out)
             self.assertIn("HINT 用法", out)
             self.assertIn("不要再试", out)
+
+
+class V42FixTests(unittest.TestCase):
+    """v42（v01-10-4 两组结果分析后）：枚举同义归一、ENUM_CHOICE 拦一次、上下游协议公司名称原文、完税证明按内容归组、租赁合同双方盖章分拆。"""
+
+    def setUp(self):
+        sys.path.insert(0, SCRIPTS)
+        import importlib
+        self.cb = importlib.import_module("combine")
+        self.st = ScriptTests("test_v30_non_enum_properties_are_not_checked")
+        self.st.setUp()
+
+    def tearDown(self):
+        self.st.tearDown()
+
+    def test_enum_alias_normalizes_only_unique_options(self):
+        st = [("active", "存续"), ("expired", "已届满"), ("revoked", "已注销")]
+        ba = [("basic", "基本户"), ("non_basic", "非基本户")]
+        et = [("limited_company", "有限公司"), ("joint_stock", "股份公司"), ("individual_business", "个体工商户"),
+              ("sole_proprietorship", "个人独资企业"), ("branch", "分公司"), ("partnership", "合伙企业"), ("other_legal_org", "其他合法组织")]
+        want = {("注销", 0): "revoked", ("在营(开业)", 0): "active", ("存续（在营、开业、在册）", 0): "active",
+                ("基本存款账户", 1): "basic", ("一般存款账户", 1): "non_basic", ("非基本户", 1): "non_basic",
+                ("有限责任公司(自然人独资)", 2): "limited_company", ("有限责任公司（自然人投资或控股）", 2): "limited_company",
+                ("股份有限公司", 2): "joint_stock", ("普通合伙企业", 2): "partnership"}
+        opts = [st, ba, et]
+        for (v, n), code in want.items():
+            self.assertEqual(self.cb.enum_alias_pick(v, opts[n])[0], code, v)
+        for v, n in (("未注销", 0), ("有限责任公司分公司", 2), ("北京市东城区藏经馆胡同17号", 2)):   # 否定、多选项命中、无关原文：不归一
+            self.assertIsNone(self.cb.enum_alias_pick(v, opts[n]), v)
+
+    def test_enum_check_maps_raw_text_to_code_with_enum_and_comment(self):
+        pd = {"enum": [{"active": "存续"}, {"expired": "已届满"}, {"revoked": "已注销"}]}
+        self.assertEqual(self.cb.enum_check("AdmissionDoc.business_license_status", pd, "注销", []), ("revoked", None))
+        pd = {"comment": "枚举 BankAccountNature：基本户、非基本户"}
+        self.assertEqual(self.cb.enum_check("AdmissionDoc.bank_account_nature", pd, "基本存款账户", []), ("基本户", None))
+
+    def test_contract_company_name_is_raw_and_match_is_derived(self):
+        spec = json.loads(read("init_spec.json"))
+        spec["request"]["upstreamDnstreamAgmtUrl"] = "http://x/10-upstreamDnstreamAgmtUrl.pdf"
+        rc, out = run(self.st.ws, "detail.py", "init", "--biz", "biz_D.txt", "biz_B.txt", "biz_T.txt", "--rules", "rules.json",
+                      stdin=json.dumps(spec, ensure_ascii=False))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("H1-15←H1-14,A02", out)
+        self.assertIn("\nH1-14|", out)                             # 名称原文交给模型读
+        self.assertNotIn("\nH1-15|", out)                          # 是否一致由脚本算
+        rc, out = run(self.st.ws, "detail.py", "fill", "--rid", RID, stdin=json.dumps(
+            {"rows": [["H1-14", "上海修匀软件开发有限责任公司", "上下游合同 upstreamDnstreamAgmtUrl p1 甲方栏｜甲方：上海修匀软件开发有限责任公司"]]}, ensure_ascii=False))
+        it = {i["id"]: i for i in self.st.detail()["items"]}
+        self.assertEqual(it["H1-15"]["value"], "true", it["H1-15"])
+        self.assertTrue(it["H1-15"]["source"].startswith("Y｜派生:H1-14,A02｜"), it["H1-15"])
+
+    def test_lease_seal_split_rows_are_listed_for_model(self):
+        init_out, _, _ = self.st._flow_with_catalog(lambda items: None)
+        for i in ("G13", "G14"):
+            self.assertIn("\n%s|" % i, init_out)
+
+    def test_tax_group_not_absent_when_only_vat_field_has_file(self):
+        spec = json.loads(read("init_spec.json"))
+        spec["request"].pop("noTaxCertSbUrl")                       # 只有 vatTaxCertUrl（实测里面常是《税收完税证明》）
+        rc, out = run(self.st.ws, "detail.py", "init", "--biz", "biz_D.txt", "biz_B.txt", "biz_T.txt", "--rules", "rules.json",
+                      stdin=json.dumps(spec, ensure_ascii=False))
+        self.assertEqual(rc, 0, out)
+        items = {i["id"]: i for i in self.st.detail()["items"]}
+        tax = [i for i in items.values() if i["name"].startswith("完税证明")]
+        self.assertTrue(tax)
+        self.assertTrue(all(i["source"] == "" for i in tax), [i["source"] for i in tax])   # 留给模型按标题读，不整组判未提供
+        spec["request"].pop("vatTaxCertUrl")
+        rc, out = run(self.st.ws, "detail.py", "init", "--biz", "biz_D.txt", "biz_B.txt", "biz_T.txt", "--rules", "rules.json",
+                      stdin=json.dumps(spec, ensure_ascii=False))
+        items = {i["id"]: i for i in self.st.detail()["items"]}
+        self.assertTrue(all(i["source"].startswith("N｜R01｜") for i in items.values() if i["name"].startswith("完税证明")))
 
 
 if __name__ == "__main__":

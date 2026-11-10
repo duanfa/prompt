@@ -31,6 +31,7 @@ import sys
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import combine_tool as ct  # noqa: E402
+import stdin_json as sj  # noqa: E402
 import detail as dt  # noqa: E402
 
 def die(msg, code=1):
@@ -259,6 +260,17 @@ def dropped_rules(rid):
         return {}
 
 
+PARSE_ERROR_MARK = "无法解析条件/结论"
+
+
+def parse_error(r):
+    """引擎解析不了这条规则（reason 或子项 reason 含“无法解析条件/结论”）：结果不可信，整条抛掉，不影响整体结论。"""
+    if PARSE_ERROR_MARK in str(r.get("reason") or ""):
+        return True
+    e = r.get("expression")
+    return isinstance(e, list) and any(isinstance(x, dict) and PARSE_ERROR_MARK in str(x.get("reason") or "") for x in e)
+
+
 def make_hits(path, rid=None):
     """从引擎原始返回生成 hit-rules.json 的内容：只保留命中（result=true）的规则全文，未命中/skip 只留计数。
     引擎没跑起来（ruleCheckList=null + failures）时 need_rule_list 打印 ENGINE_FAILED 并退出 5，不生成文件。
@@ -266,8 +278,10 @@ def make_hits(path, rid=None):
     data = ct.load(path)
     d = need_rule_list(data, path)
     out_scope = dropped_rules(rid)
-    lst = [r for r in d["ruleCheckList"] if r.get("ruleId") not in out_scope]
-    excluded = [r for r in d["ruleCheckList"] if r.get("ruleId") in out_scope]
+    parse_err = [r for r in d["ruleCheckList"] if parse_error(r)]
+    full = [r for r in d["ruleCheckList"] if not parse_error(r)]
+    lst = [r for r in full if r.get("ruleId") not in out_scope]
+    excluded = [r for r in full if r.get("ruleId") in out_scope]
     ids = [r.get("ruleId") for r in lst]
     dup = sorted({x for x in ids if ids.count(x) > 1})
     an = analyze(lst)
@@ -292,7 +306,8 @@ def make_hits(path, rid=None):
         "counts": {"total": len(lst), "judged": len(an["rows"]), "hit": an["cnt"]["T"], "missDetermined": an["cnt"]["F"],
                    "missAttrAbsent": an["cnt"]["U"], "skip": len(an["skips"]), "skipLaterStage": sk_later,
                    "unknownStatus": len(an["other"]), "duplicateRuleIds": dup,
-                   "outOfScope": len(excluded), "outOfScopeHit": sum(1 for r in excluded if str(r.get("result")).lower() == "true")},
+                   "outOfScope": len(excluded), "outOfScopeHit": sum(1 for r in excluded if str(r.get("result")).lower() == "true"),
+                   "parseError": len(parse_err), "parseErrorRuleIds": sorted({str(r.get("ruleId")) for r in parse_err})},
         "funnel": {"order": [x["level"] for x in lad],
                    "level": lad[an["lv"]]["level"] if an["lv"] is not None else None,
                    "title": lad[an["lv"]]["title"] if an["lv"] is not None else None,
@@ -329,6 +344,8 @@ def cmd_result(a):
         ("  重复ruleId=%s" % ",".join(c["duplicateRuleIds"])) if c["duplicateRuleIds"] else ""))
     if c.get("outOfScope"):
         print("OUT_OF_SCOPE %d 条规则在组装前已判定与客户准入无关，不计入结论（其中引擎给出命中 %d 条）" % (c["outOfScope"], c.get("outOfScopeHit", 0)))
+    if c.get("parseError"):
+        print("PARSE_ERROR %d 条规则引擎无法解析，已抛掉、不计入结论和计数：%s" % (c["parseError"], ",".join(c["parseErrorRuleIds"])))
     if a.rid:
         print("HITS_FILE %s  命中 %d 条（未命中与 skip 只计数、不写入）" % (hits_path(a.rid), len(doc["hits"])))
     print("命中规则：ruleId|riskMeasure|漏斗级别|ruleName|comment描述(前60字)")
@@ -973,11 +990,12 @@ def cmd_summary(a):
         if not raw.strip():
             print_need_basis(a.rid, doc)
             sys.exit(4)
-        try:
-            draft = json.loads(raw)
-        except ValueError as exc:
+        draft, warn, jerr = sj.load(raw, sj.validate_summary)
+        if warn:
+            print("WARN STDIN_REPAIRED %s。只动了括号，文字原样接收，本次继续执行，不要重跑" % warn)
+        if draft is None:               # v44：job 218 把 next 的 ] 写成 },{，旧提示只说“双引号”，两次被拒后模型绕过脚本直接提交
             if not lenient:
-                reject(["stdin 不是合法 JSON（%s）。字符串里的双引号请改写成「」。" % exc])
+                reject(["stdin 不是合法 JSON：%s" % jerr])
             draft = {}
             lenient_log.append("草稿不是合法 JSON，依据/下一步全部由脚本按规则说明生成")
         if not isinstance(draft, dict) or not isinstance(draft.get("basis"), list):
@@ -1217,10 +1235,53 @@ def enum_check(key, pd, value, rules):
         for c, l in opts:
             if l and v == l:
                 return c, None
+        hit = enum_alias_pick(v, opts)
+        if hit is not None:
+            return hit[0], None
         return value, "取值「%s」不在 enum 里，不传；可选：%s" % (short(v, 30), enum_text(opts))
     if any(v == l for _, l in opts) or v in enum_literals(key, rules):
         return v, None
+    hit = enum_alias_pick(v, opts)
+    if hit is not None:
+        return hit[1], None
     return value, "取值「%s」不在 comment 列出的选项里，不传；可选：%s" % (short(v, 30), enum_text(opts))
+
+
+ENUM_ALIASES = {k: list(v) for k, v in ct.CONFIG.get("enumAliases", {}).items()}
+PAREN_NOTE = re.compile(r"[（(][^（()）]*[)）]")
+
+
+def alias_in(w, f):
+    """w 在 f 里出现且前面不紧跟否定字（「未注销」不算注销，「非基本户」里的「基本户」不算基本户）。"""
+    i = f.find(w)
+    while i >= 0:
+        if i == 0 or f[i - 1] not in "未不无非没":
+            return True
+        i = f.find(w, i + 1)
+    return False
+
+
+def enum_alias_pick(v, opts):
+    """v42：原文与选项不逐字相同时的受控归一（am：「注销」→已注销、「基本存款账户」→基本户、「有限责任公司(自然人独资)」→有限公司）。
+    去空格与括号注释后，按选项中文名、编码及 combine_config.json 的 enumAliases 做整词/包含匹配；
+    被另一命中词包含的较短词让位（「股份有限公司」里的「有限公司」不算）；只有唯一选项命中才返回 (编码, 中文)，否则 None。"""
+    raw = re.sub(r"\s+", "", v)
+    forms = list(dict.fromkeys([raw, PAREN_NOTE.sub("", raw)]))
+    forms = [f for f in forms if f]
+    hits = {}                               # 选项序号 → 命中的最长词
+    for i, (c, l) in enumerate(opts):
+        words = [w for w in [l, c] + ENUM_ALIASES.get(l or "", []) if w and len(w) >= 2]
+        for f in forms:
+            for w in words:
+                if f == w or alias_in(w, f):
+                    if len(w) > len(hits.get(i, "")):
+                        hits[i] = w
+    if not hits:
+        return None
+    keep = [i for i, w in hits.items() if not any(w != w2 and w in w2 for w2 in hits.values())]
+    if len(keep) != 1:
+        return None
+    return opts[keep[0]]
 
 
 def key_uses(key, rules):
@@ -1275,7 +1336,10 @@ def type_fix(key, pd, value, rules):
     if ct.numeric_key(key, rules):
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             return value, None
-        return value, "规则只拿它和数字比较，取值「%s」不是数字，不传" % short(str(value), 30)
+        if isinstance(value, str) and re.fullmatch(r"-?\d+(\.\d+)?", value.strip()):   # 纯数字字符串（如 "24"）受控转成数字，不丢值
+            v = value.strip()
+            return (float(v) if "." in v else int(v)), None
+        return value, "规则只拿它和数字比较，取值「%s」不是数字，不传（set 里给纯数字，如 24 而不是“24个月”）" % short(str(value), 30)
     label = (pd or {}).get("label") or ""
     is_date = any(KEY_CMP_TAIL.match(t) for t in tails) or any(KEY_CMP_HEAD.search(h) for h, _ in uses) or \
         any(w in label for w in ("日期", "到期", "失效时间", "提交时间"))
@@ -1809,7 +1873,11 @@ def build(rid, rules, props, sets, spec_in):
             notes_unfilled.append((k, "R10", bad))
             type_dropped.append((k, bad))
             continue
+        before_enum = value
         value, bad = enum_check(k, pd, value, rules) if not is_fixed else (value, None)
+        if not bad and isinstance(before_enum, str) and value != before_enum:
+            raw0 = main["value"] if k not in sets else before_enum
+            vsrc += "；枚举原文「%s」按同义归一为选项" % raw0
         if bad:                          # am8：把「有限责任公司」「基本户」「true」传给枚举键，规则按编码比较，等于传了错值
             add_unfilled(k, "R10")
             notes_unfilled.append((k, "R10", bad))
@@ -1928,10 +1996,9 @@ def cmd_build(a):
     if not sys.stdin.isatty():
         raw = sys.stdin.read()
         if raw.strip():
-            try:
-                spec = json.loads(raw)
-            except ValueError as exc:
-                die("stdin 不是合法 JSON（%s）" % exc)
+            spec, _ = sj.read(raw, "build", a.rid)
+            if spec is None:
+                sys.exit(1)
             for k, v in (spec.get("set") or {}).items():
                 if v is None:            # v43：null 表示撤回之前落盘的 set
                     sets[k] = None
@@ -1963,6 +2030,18 @@ def cmd_build(a):
     checks = review_checks(a.rid)
     for k, msg, _ in CATEGORY_CHECKS:
         checks.append("CATEGORY_SIGNAL %s｜%s" % (k, msg))
+    # v42：规则引用的枚举键取值被丢弃时先拦一次，要求按选择题重选或明确 skip（am 220：「注销」被丢，注销拦截规则跳过，结论降为转人工）。
+    # 同一个键只拦一次：再被丢弃就按软项放行，不让 build 循环。
+    gate_fp = os.path.join("work", a.rid, "build-gate.json")
+    prev_gate = ct.load(gate_fp) if os.path.isfile(gate_fp) else {}
+    enum_blocked = list(prev_gate.get("enumBlocked", []))
+    for k, why in enum_dropped:
+        if k in enum_blocked:
+            continue
+        enum_blocked.append(k)
+        checks.append("ENUM_CHOICE %s｜%s｜原文已取到但不是选项：按选择题用 set 提交一个选项（有 enum 交编码），依据写「派生:条目ID｜选项｜置信度约N%%｜理由」；都不过半就在 skip.R10 里明确列出该键。本键只拦这一次" % (k, why))
+    with open(gate_fp, "w", encoding="utf-8") as f:     # 先落盘：之后即使因 INST_REQUIRED_MISSING 提前退出，也不会重复拦同一个键
+        json.dump({"soft": prev_gate.get("soft", []), "enumBlocked": enum_blocked}, f, ensure_ascii=False)
     for c in checks:
         print("CHECK " + c)
     for _, _, card in CATEGORY_CHECKS:
@@ -2001,7 +2080,20 @@ def cmd_build(a):
         sys.exit(1)
     print("INPUT " + json.dumps(cb["input"], ensure_ascii=False, separators=(",", ":")))
     print("NOTES " + json.dumps(no_curly(notes), ensure_ascii=False, separators=(",", ":")))
-    sys.exit(1 if checks or any(ln.startswith("ERR") for ln in lines) else 0)
+    hard = bool(checks or any(ln.startswith("ERR") for ln in lines))
+    soft = sorted(["UNDECIDED " + k for k, _ in undecided] + ["TYPE_DROPPED " + k for k, _ in type_dropped] +
+                  ["ENUM_DROPPED " + k for k, _ in enum_dropped] + ["NEED_VALUE " + k for k, _ in need])
+    with open(gate_fp, "w", encoding="utf-8") as f:
+        json.dump({"soft": soft, "enumBlocked": enum_blocked}, f, ensure_ascii=False)
+    if hard:
+        print("GATE: BLOCKED 有 CHECK/ERR，按上面提示改完重新 build；不得调用 mcp_run_process")
+    else:
+        # v41：UNDECIDED/TYPE_DROPPED/ENUM_DROPPED/NEED_VALUE 已按 R10 记入 unfilled、不进 input，只提醒不拦引擎。
+        # 原来要“原样再 build 一次”才放行，模型常在这一步去改明细后忘了重 build，直接交“规则引擎未执行”（trace 82609fcb）。
+        if soft:
+            print("SOFT_UNFILLED %d 个键已按 R10 记入 unfilled、不进 input，不拦引擎：%s" % (len(soft), "、".join(soft)))
+        print("GATE: READY 下一步直接调用 mcp_run_process，request.input = 上面 INPUT 行原样（不要再改明细或重跑 build）")
+    sys.exit(1 if hard else 0)   # 退出码保持原约定（只看 CHECK/ERR）；软项是否放行看 GATE 行
 
 
 ASSERT_WORDS = ("真实", "合规", "正常", "可信", "无异常", "没有异常")

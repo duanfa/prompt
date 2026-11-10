@@ -17,7 +17,7 @@ v37 起不再有审核 A / 审核 B 的独立轮次。能机械核对的都在�
 - `detail.py fill`：伪造嫌疑类条目写入时自动去掉含断言的分句（`TRIMMED`）；工商与原件不一致时要求 `recheck`。
 - `combine.py summary`：结论、覆盖、条数、「」引文出自提交资料、不含规则 ID/英文属性名。
 
-build 输出 `validate: OK` 且没有 `CHECK`、`ERR`、`INST_REQUIRED_MISSING` 行，就直接进入第二节。有 `CHECK`：用 `detail.py fill --rid <id> --force` 改写被点名的行（只写逐项看了什么），再跑一次 build。有 `INST_REQUIRED_MISSING`：按本次机构规则含义补齐有证据的 map/set 后重跑；来源确实缺失时在 toolIssues 记缺失键和原因，summary 写“审核未完成：机构自定义规则所需资料不足。”，不调用 mcp_run_process，不编造值。
+build 最后打印 `GATE: READY`（`validate: OK` 且没有 `CHECK`、`ERR`、`INST_REQUIRED_MISSING`，`UNDECIDED`/`TYPE_DROPPED`/`ENUM_DROPPED`/`NEED_VALUE` 只是提醒，已按 R10 记入 unfilled、不拦门禁），就直接进入第二节，不再改明细或重跑 build。有 `CHECK`：用 `detail.py fill --rid <id> --force` 改写被点名的行（只写逐项看了什么），再跑一次 build。有 `INST_REQUIRED_MISSING`：按本次机构规则含义补齐有证据的 map/set 后重跑；来源确实缺失时在 toolIssues 记缺失键和原因，summary 写“审核未完成：机构自定义规则所需资料不足。”，不调用 mcp_run_process，不编造值。
 
 写明细时自己守住这几条（脚本看不出）：材料来源的值要有原件栏位原文；视频“场所虚构/真实”只在视频回答有明确物理造假证据和时间点时才填；影像合格、成立月数、名称比较等派生由脚本算，不手改；“不一致”只说材料和工商各是什么，不写成伪造/虚构。
 
@@ -87,7 +87,7 @@ summary 固定三段：**结论 / 依据 / 下一步**；有事项时脚本加�
 
 - 通过：打印 `OK …`、`SUMMARY`，以及 **`FINAL {…}`**——脚本拼好的最终结果（input = 最近一次 build 的 input-combine.json，即调引擎时的 INPUT；notes = 最近一次 build 的 notes；summary；弯引号已统一成「」），同时写 `work/<requestId>/final-output.json`。
 - 不通过：打印 `ERR …` 退出 1。v39 起“要写给客户看，用业务用语”也会退回：按提示把代号、技术词换成中文业务说法。**只改被点名的条目**，其余原样再提交；引文被拒时 ERR 会给出“最接近的原文”，逐字抄其中一段，或去掉「」改用自己的话，**不要只改标点再试**。
-- **被拒 2 次后，第 3 次提交由脚本收尾**：不合格的条目直接丢弃，缺的依据/下一步用规则名称和说明补齐（打印 `LENIENT …`），一定打印 `FINAL`。所以 summary 最多跑 3 次，不要再多。退出 3 = 引擎结果不完整，按第四节。
+- **被拒 2 次后，第 3 次提交由脚本收尾**：不合格的条目直接丢弃，缺的依据/下一步用规则名称和说明补齐（打印 `LENIENT …`），一定打印 `FINAL`。所以 summary 最多跑 3 次，不要再多。stdin 不是合法 JSON 也按被拒计数；**没有 `FINAL` 不得调用 GenerateStructuredOutput，也不得自己拼最终结果**（v44：job 218 两次被拒后自拼提交，摘要未经校验）。退出 3 = 引擎结果不完整，按第四节。
 
 ## 四、提交
 

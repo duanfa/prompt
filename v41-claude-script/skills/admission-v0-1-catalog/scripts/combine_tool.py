@@ -288,6 +288,8 @@ def cmd_validate(a):
                     ok = str(d["value"]).lower() == pv.lower() if isinstance(d["value"], bool) else str(d["value"]) in (pv, norm_text(pv))
                     if not ok and isinstance(d["value"], str) and re.fullmatch(r"\d{8}", d["value"]):     # v33：日期键统一为 yyyyMMdd
                         ok = d["value"] in ["%04d%02d%02d" % tuple(map(int, g)) for g in re.findall(r"(\d{4})\D{0,2}(\d{1,2})\D{0,2}(\d{1,2})", pv)]
+                    if not ok and ("；枚举原文「%s」按同义归一为选项" % pv) in d["value_source"]:   # v42：枚举原文按 enumAliases 归一
+                        ok = True
                     if not ok:
                         errs.append("combine %s.%s: value=%r 与 extract %s 的 %r 不一致" % (o, p, d["value"], prim["id"], pv))
             elif d["extractIds"]:

@@ -28,6 +28,8 @@ import sys
 from datetime import date
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
+import stdin_json as sj  # noqa: E402
 CAT = os.path.realpath(os.path.join(HERE, ".."))
 CONTRACT = "admission-noshell-v0-1"
 RID_OK = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -228,10 +230,16 @@ def load_json_file(path):
         return json.JSONDecoder().raw_decode(f.read().lstrip())[0]
 
 
-def read_stdin():
+def read_stdin(step=None, rid=None):
+    """step=fill/recheck 时走 stdin_json：只改括号的结构修复 + 连续失败计数（job 216 少一个 ] 重提 29 次）。"""
     raw = sys.stdin.read()
     if not raw.strip():
         die("stdin 为空")
+    if step:
+        obj, _ = sj.read(raw, step, rid)
+        if obj is None:
+            sys.exit(1)
+        return obj
     try:
         return json.loads(raw)
     except ValueError as exc:
@@ -244,9 +252,7 @@ def read_stdin():
             return obj
     except ValueError:
         pass
-    pos = getattr(err, "pos", None)
-    near = ("；出错位置附近：…%s…" % raw[max(0, pos - 30):pos + 10].replace("\n", " ")) if isinstance(pos, int) else ""
-    die("stdin 不是合法 JSON（%s%s）。常见原因：结尾括号多/少、字符串里有 ASCII 双引号或反斜杠（引号改写成「」）。只改出错的符号，不要改动 value/text 的原文。" % (err, near))
+    die("STDIN_JSON_INVALID stdin 不是合法 JSON：%s。本次未写入。只改结构符号，不要改动 value/text 的原文。" % sj.diagnose(raw, err))
 
 
 def id_numbers(text):
@@ -1191,7 +1197,7 @@ def report(rid, doc, st, header=False):
 
 def cmd_fill(a):
     doc, st = load_detail(a.rid)
-    spec = read_stdin()
+    spec = read_stdin("fill", a.rid)
     by = {x["id"]: x for x in doc["items"]}
     pre, errs, done, autofix, skipped, sanitized, fallback = set(st["prefilled"]), [], [], [], [], [], []
     items_by = {x["id"]: x for x in load_items()}
@@ -1378,7 +1384,7 @@ def cmd_recheck(a):
     二次识别 ≠ 首次且 ≠ 工商 → 两次识别不一致：该项置 N R06，不取值；
     二次识别仍无法确认（value=null）→ 该项置 N，不取值。"""
     doc, st = load_detail(a.rid)
-    spec = read_stdin()
+    spec = read_stdin("recheck", a.rid)
     by = {x["id"]: x for x in doc["items"]}
     pairs = {p[0]: p for p in PAIRS}
     status = {p[0]: p[4] for p in pair_rows(doc)}

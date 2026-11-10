@@ -112,11 +112,23 @@ class T(unittest.TestCase):
         rc, out = self.run_("result", "--file", eng)
         self.assertIn("FUNNEL_LEVEL 无（命中规则的处置级别", out)
 
+    def test_parse_error_rules_are_dropped_not_marking_result_incomplete(self):
+        # 262：引擎无法解析的规则（含 risk 来源重复 ruleId 的那两条）整条抛掉，不再让摘要卡在“结果不完整”
+        eng = self.put("e.json", fixture="engine_parse_error_262.json")
+        rc, out = self.run_("result", "--file", eng)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("总条数=51", out)
+        self.assertIn("PARSE_ERROR 6 条规则引擎无法解析", out)
+        self.assertNotIn("重复ruleId", out)
+        self.assertNotIn("WARN 重复 ruleId", out)
+        self.assertIn("FUNNEL_LEVEL 通过｜", out)
+
     def test_user_response_1105_is_blocked_and_the_compound_value_is_flagged(self):
         eng = self.put("e.json", fixture="response-1105.json")
         rc, out = self.run_("result", "--file", eng)
         self.assertEqual(rc, 0, out)
-        self.assertIn("已判定=4（命中 T=3，未命中 F=1 U=0）  skip=74", out)
+        self.assertIn("已判定=4（命中 T=3，未命中 F=1 U=0）  skip=68", out)
+        self.assertIn("PARSE_ERROR 6 条规则引擎无法解析", out)
         self.assertIn("FUNNEL_LEVEL 拦截｜", out)
         self.assertIn("FUNNEL_UNRECOGNIZED RULE-GATE-002|营业执照成立日期为空转人工|riskMeasure=不足3月拦截，3-6月建议拦截", out)
         self.assertIn("FUNNEL_HITS 拦截:RULE-GATE-001,RULE-GATE-003；", out)            # v32：列 ruleId，不再列小表序号
@@ -541,7 +553,7 @@ class T(unittest.TestCase):
         self.assertEqual((doc["hits"][0]["level"], doc["hits"][0]["atConclusionLevel"]), ("拦截", True))
         self.assertIsNone(doc["hits"][1]["level"])
         self.assertEqual(doc["counts"], {"total": 5, "judged": 4, "hit": 2, "missDetermined": 1, "missAttrAbsent": 1, "skip": 1,
-                                         "skipLaterStage": 1, "unknownStatus": 0, "duplicateRuleIds": [], "outOfScope": 0, "outOfScopeHit": 0})
+                                         "skipLaterStage": 1, "unknownStatus": 0, "duplicateRuleIds": [], "outOfScope": 0, "outOfScopeHit": 0, "parseError": 0, "parseErrorRuleIds": []})
         self.assertEqual(doc["funnel"]["level"], "拦截")
         self.assertNotIn("R-MISS", json.dumps(doc["hits"], ensure_ascii=False))
         os.remove(os.path.join(self.ws, eng))                                       # 删掉原始返回：summary 只靠 hit-rules.json
