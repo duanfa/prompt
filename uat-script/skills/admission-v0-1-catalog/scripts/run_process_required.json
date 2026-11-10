@@ -1,0 +1,44 @@
+{
+ "_说明": "调用 mcp_run_process 时 input 必须带的键（预设键），以及枚举键的兜底。combine.py build 读取，模型不用读。required 每项：key=对象.属性（本体改名只改这里）；item=取值的清单条目（请求原文，不做转码）；enumFromDefinition=true 且本次定义有枚举时，保留模型的 map/skip/set 并校验单选编码；否则 soft=true 时模型对该键提交的 map/skip/set 只忽略并打印 PRESET_OVERRIDE_IGNORED、不退回，false 时改映/skip 退回（四个 ID 不可互换）；why=必填原因。定义里有没有这个键都传；请求没值不传、不兜底，只记 notes.toolIssues。",
+ "required": [
+  {
+   "key": "Employer.employer_id",
+   "item": "A01",
+   "soft": false,
+   "why": "企业ID（entpId）"
+  },
+  {
+   "key": "Employer.enterprise_name",
+   "item": "A02",
+   "soft": false,
+   "why": "企业名称（entpName）：机构自定义风险规则（ruleSource=risk）不在 mcp_list_rule 里、只在引擎返回中出现，缺企业名称会 skip、漏掉真实命中"
+  },
+  {
+   "key": "Demand.demand_id",
+   "item": "A03",
+   "soft": false,
+   "why": "需求ID（rqId）"
+  },
+  {
+   "key": "LaborAgency.agency_id",
+   "item": "A04",
+   "soft": false,
+   "why": "机构ID（hrInstId）"
+  },
+  {
+   "key": "Agency.agency_id",
+   "item": "A04",
+   "soft": false,
+   "why": "机构ID（hrInstId，与 LaborAgency.agency_id 同值）：引擎流程读它，缺失时引擎整体失败"
+  },
+  {
+   "key": "Employer.usage_scenario",
+   "item": "A08",
+   "soft": true,
+   "enumFromDefinition": true,
+   "why": "用工场景必填：有 enum/comment 枚举定义时按项目内容和交付要求由模型单选编码，无枚举定义时取 projCont 原文；无值不编造"
+  }
+ ],
+ "enumFallbacks": [],
+ "_enumFallbacks说明": "规则引用的枚举键的兜底：本次没有取到值（未进 input）时传 fallback。每项：key=对象.属性；fallback=选项（有 enum 写编码或中文选项，没有 enum 写 comment 里的选项；不是选项则不传并记 toolIssues）；why=兜底原因。只对本次规则引用、定义里有选项的键生效；用了兜底只记 notes.toolIssues，不进摘要。required 里的键不能写在这里。"
+}

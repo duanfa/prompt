@@ -1,0 +1,98 @@
+{
+ "$comment": "v24：在绑定 schema 基础上增加可选顶层字段 extractionReport。平台未采纳时不得输出该字段，参数来源仅保存在 work/<requestId>/input-extract-detail.json（提取明细）和 input-combine.json（本体组装）。",
+ "type": "object",
+ "properties": {
+  "input": {
+   "type": "object",
+   "additionalProperties": true,
+   "description": "与最后一次成功调用 mcp_run_process 的 request.input 完全一致"
+  },
+  "notes": {
+   "type": "object",
+   "properties": {
+    "unresolvedProperties": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "v24：提取明细（全部清单条目）里 value 为 null 的条目，加 input-combine.unfilled 的登记；每条 名称｜原因码(R01-R15)｜具体原因；同原因的多个键可合并但须列具体键"
+    },
+    "notFoundInDefinition": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "conflicts": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "unreadMaterials": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "toolIssues": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "unresolvedProperties",
+    "notFoundInDefinition",
+    "conflicts",
+    "unreadMaterials",
+    "toolIssues"
+   ],
+   "additionalProperties": false
+  },
+  "summary": {
+   "type": "string"
+  },
+  "extractionReport": {
+   "type": "array",
+   "description": "可选。input-extract-detail.json 的 items 原样：name=清单条目，desc=业务语义，value=取到的值（字符串，取不到为 null），source=来源（Y｜来源｜证据 或 N｜原因码｜原因）",
+   "items": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "name": {
+      "type": "string"
+     },
+     "desc": {
+      "type": "string"
+     },
+     "value": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "source": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "desc",
+     "value",
+     "source"
+    ],
+    "additionalProperties": true
+   }
+  }
+ },
+ "required": [
+  "input",
+  "notes",
+  "summary"
+ ],
+ "additionalProperties": false
+}
