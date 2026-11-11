@@ -2,7 +2,7 @@
 RunSkillScript 的脚本（detail.py / combine.py）回归：用 v25 一次真实运行的请求、工商三接口返回、规则、属性定义，
 按 RunSkillScript 的方式运行（python3 -I、空环境、工作区当 cwd、stdin 管道），核对：
   init 预填行数、fill 后无待填、派生行与那次模型手写的一致、combine 的 input 与那次一致、机械校验通过。"""
-import json, os, shutil, subprocess, sys, tempfile, unittest
+import importlib, json, os, shutil, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.join(os.path.dirname(HERE), "skills", "admission-v0-1-1-catalog", "scripts")
@@ -1352,6 +1352,17 @@ class V42FixTests(unittest.TestCase):
             got, why = self.cb.enum_check("X.y", pd, v, [])
             self.assertEqual(got, v, v)                                  # 原值不变
             self.assertIn("不在 enum 里，不传", why or "", v)            # 进 ENUM_DROPPED / unfilled，不进 input
+
+    def test_g13_no_red_seal_notice_fires_on_false_literal(self):
+        """G13 是布尔：notice 条件写 false，没草稿 notice 时脚本字面预判也能把“租赁合同没有红色鲜章”放进注意。"""
+        dt = importlib.import_module("detail")
+        g13 = next(x for x in dt.load_items() if x["id"] == "G13")
+        row = lambda v, src: {"id": "G13", "value": v, "source": src}
+        self.assertEqual(self.cb.notice_literal(g13, row("false", "Y｜租赁合同 leaseAgreementUrl p3｜双方签章处均为黑色章形"), {}), ["false"])
+        self.assertEqual(self.cb.notice_literal(g13, row("true", "Y｜租赁合同 leaseAgreementUrl p3｜承租方红色圆章"), {}), [])
+        self.assertEqual(self.cb.notice_literal(g13, row("false", "Y｜租赁合同 leaseAgreementUrl p1｜出租方章「周海明 出租专用章」、承租方章「上海修匀软件 合同专用章」印迹均为灰色，未见红色"), {}), ["false"])
+        self.assertEqual(self.cb.notice_literal(g13, row(None, "N｜R06｜签章区域被裁切，看不清"), {}), [])   # 看不清签章不提醒“没有鲜章”
+        self.assertIn("有章但不是红色同样是false", g13["desc"])                                          # 灰色章 → false，不是 null
 
     def test_enum_check_accepts_only_exact_code_or_label(self):
         pd = {"enum": [{"active": "存续"}, {"expired": "已届满"}, {"revoked": "已注销"}]}

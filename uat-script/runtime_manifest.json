@@ -1,7 +1,7 @@
 {
   "contract": "admission-noshell-v0-1-1",
   "revision": "0.1.1",
-  "runtime_characters": 59745,
+  "runtime_characters": 60054,
   "files": [
     {
       "path": "主提示词_v0-1-1_编排版.md",
@@ -29,7 +29,7 @@
     },
     {
       "path": "skills/admission-v0-1-1-materials/SKILL.md",
-      "sha256": "b240cf7c9ae262967423b3f128a118a45e5945556b70ddc78cec303ca1f5204a"
+      "sha256": "7f761581b22181d0ef24e4b1905c45f552f38a7567175c0c6918cf739a2f9b57"
     },
     {
       "path": "skills/admission-v0-1-1-output/SKILL.md",
