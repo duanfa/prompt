@@ -9,7 +9,7 @@ metadata:
 
 # 视频读取与重试
 
-本次提供了视频才执行。`file_path` 用网关消息 `Video attachment saved at "…"` 里的路径原样（不用请求里的 officeVideoUrl，不自己拼路径）；没有这行就记视频不可读并写明“网关未给出视频保存路径”，不调用 ReadVideo。在第 2 轮与 `detail.py init` 同轮发起 ReadVideo，不等定义；不从文件名推断时长。**E 组条目的依据写视频回答的原话和时间点**
+本次提供了视频才执行。`file_path` 用附件清单里视频那行（description 含 officeVideoUrl/办公场所视频，read 为 ReadVideo）的 path 原样；旧格式用 `Video attachment saved at "…"` 里的路径；不用请求里的 officeVideoUrl，不自己拼路径。没有视频路径就记视频不可读并写明“网关未给出视频保存路径”，不调用 ReadVideo。在第 2 轮与 `detail.py init` 同轮发起 ReadVideo，不等定义；不从文件名推断时长。**E 组条目的依据写视频回答的原话和时间点**
 
 ## 问法
 
