@@ -1,11 +1,11 @@
 ---
-name: admission-v0-1-1-output
+name: admission-dou-1-1-output
 description: build 通过脚本检查后调用规则引擎；combine.py result 给出漏斗结论和写草稿要的内容，combine.py summary 校验草稿并输出最终结果一行 FINAL，原样提交。
 metadata:
-  prompt-contract: admission-noshell-v0-1-1
-  prompt-version: "0.1.1"
+  prompt-contract: admission-noshell-dou-1-1
+  prompt-version: "dou-1-1"
 ---
-# admission-noshell-v0-1-1 / admission-v0-1-1-output
+# admission-noshell-dou-1-1 / admission-dou-1-1-output
 
 # 引擎调用与最终输出
 

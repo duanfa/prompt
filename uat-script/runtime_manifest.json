@@ -1,42 +1,42 @@
 {
-  "contract": "admission-noshell-v0-1-1",
-  "revision": "0.1.1",
+  "contract": "admission-noshell-dou-1-1",
+  "revision": "dou-1-1",
   "runtime_characters": 59118,
   "files": [
     {
-      "path": "主提示词_v0-1-1_编排版.md",
+      "path": "主提示词_dou-1-1_编排版.md",
       "sha256": "4f03cd20db75cbcdf3b1da8dc65a91a2913cbe47d466eac3e96bef9ae619ee3a"
     },
     {
-      "path": "skills/admission-v0-1-1-business/SKILL.md",
+      "path": "skills/admission-dou-1-1-business/SKILL.md",
       "sha256": "33b81ddb12f9f1a5e2015e9b192212e40ada348f215926eb6fc8b69bc0d6e78f"
     },
     {
-      "path": "skills/admission-v0-1-1-catalog/SKILL.md",
+      "path": "skills/admission-dou-1-1-catalog/SKILL.md",
       "sha256": "9ba7dc4935e265c3b218fd5c33cb9cff05611da65520730c988fbf737f2db5eb"
     },
     {
-      "path": "skills/admission-v0-1-1-category/SKILL.md",
+      "path": "skills/admission-dou-1-1-category/SKILL.md",
       "sha256": "4420a0c87cb46885bd7f75b1c38ab57c37b2830fc5d8c206105f43f14d69f242"
     },
     {
-      "path": "skills/admission-v0-1-1-discover/SKILL.md",
+      "path": "skills/admission-dou-1-1-discover/SKILL.md",
       "sha256": "301698ffe395312360613f0f727e92bdd766864a8b75f4a1ee4d432e22c1d3dc"
     },
     {
-      "path": "skills/admission-v0-1-1-facts/SKILL.md",
+      "path": "skills/admission-dou-1-1-facts/SKILL.md",
       "sha256": "2238863978a16f261030b94339e437f7b8a1a906bf2e23068a9a915480ac1963"
     },
     {
-      "path": "skills/admission-v0-1-1-materials/SKILL.md",
+      "path": "skills/admission-dou-1-1-materials/SKILL.md",
       "sha256": "0c892133cd4f6dfed77a0033bcdfcd3fa9e209bfb0352ceec33c71ce012cca25"
     },
     {
-      "path": "skills/admission-v0-1-1-output/SKILL.md",
+      "path": "skills/admission-dou-1-1-output/SKILL.md",
       "sha256": "b71dbd933cad472876f49f848edb4e4a8a27ce123540ce3ff4794f9c8d2f4de8"
     },
     {
-      "path": "skills/admission-v0-1-1-video/SKILL.md",
+      "path": "skills/admission-dou-1-1-video/SKILL.md",
       "sha256": "5cae8da106cccdbcd705889dae3996ab9b4018449271ffa1f62863a067a5c38a"
     }
   ],

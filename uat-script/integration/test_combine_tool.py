@@ -5,10 +5,10 @@ import json, os, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-SCRIPTS = os.path.join(ROOT, "skills", "admission-v0-1-1-catalog", "scripts")
+SCRIPTS = os.path.join(ROOT, "skills", "admission-dou-1-1-catalog", "scripts")
 TOOL = os.path.join(SCRIPTS, "combine_tool.py")
 FX = os.path.join(HERE, "fixtures")
-ITEMS = os.path.join(ROOT, "skills", "admission-v0-1-1-catalog", "extract-items-checked.json")
+ITEMS = os.path.join(ROOT, "skills", "admission-dou-1-1-catalog", "extract-items-checked.json")
 # 模拟 Agent 按语义做的 键→条目 对应（清单不再带 hintKeys/derivedKeys，工具靠 --map 做离线回归）
 MAP = {"Employer.founded_months": ["B16"], "AdmissionDoc.photo_count": ["F01"],
        "Employer.has_independent_employment_status": ["B17", "B18", "B19"],
@@ -53,7 +53,7 @@ def build_extract():
 
 def write_extract(path, items):
     with open(path, "w", encoding="utf-8") as f:
-        f.write('{\n"contract":"admission-noshell-v0-1-1",\n"schema":"input-extract-detail/3",\n')
+        f.write('{\n"contract":"admission-noshell-dou-1-1",\n"schema":"input-extract-detail/3",\n')
         f.write('"routing":{"requestId":"123","domain":"demo","scene":"admission","businessKey":"123456"},\n')
         f.write('"materials":{"bizlicUrl":["可读","名称栏：示例科技有限公司"]},\n"items":[\n')
         f.write(",\n".join(json.dumps(i, ensure_ascii=False, separators=(",", ":")) for i in items))

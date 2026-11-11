@@ -1,11 +1,11 @@
 ---
-name: admission-v0-1-1-video
+name: admission-dou-1-1-video
 description: 有视频时与属性查询同轮读取，用固定问法取观察事实；推测性回答不升级为虚构，限制重试。
 metadata:
-  prompt-contract: admission-noshell-v0-1-1
-  prompt-version: "0.1.1"
+  prompt-contract: admission-noshell-dou-1-1
+  prompt-version: "dou-1-1"
 ---
-# admission-noshell-v0-1-1 / admission-v0-1-1-video
+# admission-noshell-dou-1-1 / admission-dou-1-1-video
 
 # 视频读取与重试
 

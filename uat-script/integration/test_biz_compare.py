@@ -7,7 +7,7 @@
 import os, sys, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(HERE), "skills", "admission-v0-1-1-catalog", "scripts"))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "skills", "admission-dou-1-1-catalog", "scripts"))
 import detail as dt  # noqa: E402
 import combine as cb  # noqa: E402
 

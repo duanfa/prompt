@@ -1,11 +1,11 @@
 ---
-name: admission-v0-1-1-materials
+name: admission-dou-1-1-materials
 description: 逐份登记附件可读性并摘录原件字段，只对可读材料取原文；以实际可见内容为准，不看日志占位。
 metadata:
-  prompt-contract: admission-noshell-v0-1-1
-  prompt-version: "0.1.1"
+  prompt-contract: admission-noshell-dou-1-1
+  prompt-version: "dou-1-1"
 ---
-# admission-noshell-v0-1-1 / admission-v0-1-1-materials
+# admission-noshell-dou-1-1 / admission-dou-1-1-materials
 
 # 材料盘点与直取
 

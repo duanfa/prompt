@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "skills/admission-v0-1-1-catalog/scripts/detail.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "skills/admission-dou-1-1-catalog/scripts/detail.py"
 SPEC = importlib.util.spec_from_file_location("stdin_detail", SCRIPT)
 detail = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(detail)

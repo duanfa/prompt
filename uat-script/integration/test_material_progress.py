@@ -16,8 +16,11 @@ def next_material(out):
 
 
 def pending_ids(out):
+    """PENDING 下列 desc 的本批行 + LATER 行里只给 ID 的其余行（v45 起不再一次列全）。"""
     lines = out.split("\nPENDING 待填", 1)[1].splitlines()[1:]
-    return [ln.split("|")[0] for ln in lines if re.match(r"^[A-Z][0-9A-Z-]*\|", ln)]
+    ids = [ln.split("|")[0] for ln in lines if re.match(r"^[A-Z][0-9A-Z-]*\|", ln)]
+    later = next((ln for ln in lines if ln.startswith("LATER ")), "")
+    return ids + [i for i in later.split("：", 1)[-1].split("、") if i and later]
 
 
 class MaterialProgressTests(unittest.TestCase):
@@ -60,13 +63,13 @@ class MaterialProgressTests(unittest.TestCase):
 
     def test_video_group_says_no_read(self):
         rc, out = self.init()
-        while True:
+        for _ in range(20):
             g, ids = next_material(out)
-            if g in (None, "办公场所视频"):
+            if g is None or "办公场所视频" in g:
                 break
             rc, out = self.fill([[i, None, "R03｜回归夹具"] for i in ids])
             self.assertEqual(rc, 0, out)
-        if g == "办公场所视频":
+        if g and "办公场所视频" in g:
             line = next(ln for ln in out.splitlines() if ln.startswith("NEXT_MATERIAL"))
             self.assertIn("不要 Read 视频文件", line)
             self.assertNotIn("is offloaded", line)
@@ -79,7 +82,7 @@ class MaterialProgressTests(unittest.TestCase):
         single = {x["id"]: (x["value"], x["source"]) for x in self.detail()["items"]}
         shutil.rmtree(os.path.join(self.ws, "work"))
         rc, out = self.init()
-        while True:
+        for _ in range(20):
             g, ids = next_material(out)
             if not g:
                 break
