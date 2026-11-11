@@ -1,3 +1,27 @@
+## 当前修订：命中规则带 hit 关键词时，关键词与 comment 拼成一句进 summary（2026-11-11，版本仍为 0.1.1）
+
+- **需求**：引擎对关键词类规则（如机构规则 `Project.project_name CONTAINS [使用的应用]`）的命中项返回 `"hit": ["使用的应用"]`，summary 要写明命中了哪个关键词。
+- **`combine.py`**：`result` 把 `hit` 保留进 `hit-rules.json`（字符串也接受，去空去重）；`summary` 渲染时在引用该规则的依据/下一步开头放「命中关键词「使用的应用」，触发风控行业限制，不予准入」（comment 去掉「｜适用阶段…」），模型文字里已有这句不重复；宽松补齐时也用这句。关键词允许出现在模型的「」引文里。NEED_BASIS 打印 `HIT_KEYWORDS`，告诉模型不用复述。没有 `hit` 的规则不变。
+- **output skill 3.2** 同步一句。
+- 测试：新增 `integration/test_hit_keywords.py`（7 项：保留进文件、依据开头、可引用关键词、不重复、其余级别进下一步、无 hit 不变、宽松补齐）；全量结果同上一条。**未部署、未重跑远端模型。**
+
+## 当前修订：按材料逐份读、逐份 fill，防图片卸载导致的重读循环（job_299-v11-7，26 分钟，2026-11-11，版本仍为 0.1.1）
+
+- **问题**：`ontology_agent_job_299-v11-7`（doubao-seed-2-1-pro）26 分 11 秒，其中首次读图到首次 fill 14.2 分钟、37 次模型调用。6 张图各 Read 6 遍。**根因**：WanScope 只在上下文里保留最近约 5 张图片，更早的 Read 返回被替换成「The image … is offloaded into workspace:///data/…」；主提示词要求 `fill`“一次”，模型要等 6 张图都可见才提交，永远凑不齐，于是循环重读。主提示词还写着“主流程用不到 Read”，模型把卸载提示当成读取失败。
+- **`detail.py`**：init/fill 打印 `BY_MATERIAL`（待填行按材料分组计数）和 `NEXT_MATERIAL`（下一份看什么、本次只交哪些 ID、卸载提示不是失败）。组顺序：营业执照 → 开户凭证 → 身份证 → 租赁合同 → 场景照片 → 补充材料 → 视频 → 请求参数 → 工商；每组最多 3 张图。原有 `PENDING` 输出不变。
+- **主提示词**：新增红线 14（按份读、按份交；卸载 ≠ 失败；该份的 RECHECK 趁图还可见先做；每份附件最多读 2 次）；第一节第 3 条改为 Read 只用于平台卸载的附件路径；第二节第 3 轮改为“按材料逐份，多次”。
+- **materials skill**：开头加读取顺序；B12 颜色复核在看营业执照的同一轮完成、不再另起一轮 Read；工商复核只对点名的那一份附件 Read 一次。
+- 测试：新增 `integration/test_material_progress.py`（init 先指向营业执照；交完一组后换下一份；视频组提示不要 Read；分批 fill 与一次 fill 结果一致，仅脚本自行派生的行可不同）。全量除 `test_scripts.py` `VerifyTests` 2 项（未提交的 B05/B05-1 拆分引起，已有）外均通过。
+- **未做/未验证**：未用 299 重跑远端模型，节省时长是按时间线估算；长生成（单次 100–200 秒）、约 10 万 token 上下文和上下文压缩没有处理。平台侧建议另提：提高图片保留数，或卸载时保留模型对该图的已提交结论。`Archive.zip`、`runtime_manifest.json` 仍未更新（同上一条）。
+
+## 当前修订：工商比对三处误报（豆包 job_329-3，2026-11-11，版本仍为 0.1.1）
+
+- **问题**：`ontology_agent_job_329-3`（doubao-seed-2-1-pro）原件识别均正确（已对照营业执照、开户许可证、租赁合同原件），但 summary「注意」出现 3 条假的不一致：①营业期限：执照「至长期」对工商 `D.operationEnddate=9999-09-09`；②经营范围：两侧只差句号位置，却写成“材料上有而工商没有 / 工商有而材料上没有”同一项；③注册资本：执照「人民币壹佰万元」对工商 `D.capital=100.000000`，notice 按字面比较判成不一致。
+- **`detail.py` `same_fact`**：period 把年份 ≥9000 的工商截止日当作长期；scope 比较忽略标点与全半角（与 `same_reading` 同口径）。
+- **`combine.py` `notice_compare`**：比较类 notice 的两侧是 `PAIRS` 里的工商比对对时，改用 `same_fact` 按类型判；其余条目仍按字面。
+- 测试：新增 `integration/test_biz_compare.py`（9 项，用本次真实取值；还原修改后其中 3 项失败，确认能抓到问题）。全量除 `test_scripts.py` 的 `VerifyTests` 2 项外均通过；这 2 项在还原本次修改后同样失败，来自未提交的清单 B05/B05-1 拆分，与本修订无关。
+- **未做**：catalog `Archive.zip` 未重打包、`runtime_manifest.json` 未重算（现有 zip 含 `__MACOSX`/`__pycache__`；manifest 的 script_characters 与 scripts/*.py 字符数对不上，算法待确认）。**仅本地验证，未部署、未重跑远端模型。**
+
 ## 当前修订：名称类条目强制逐字复核、名称错字时伪造嫌疑不判 false（SHMX-2985，2026-11-11，版本仍为 0.1.1）
 
 - **问题**：`ontology_agent_job_329-tong` 开户许可证账户名称原文「杭州浮岛科技有限公同」，D01 被识别为「…有限公司」，与工商 J01 一致，不出 `RECHECK_ITEM`；`Employer.settlement_account_name` 传入误识别值，`RULE-DOC-014`（开户名称与执照不一致）漏命中。D12 伪造嫌疑记 false、写“无违背常识”。

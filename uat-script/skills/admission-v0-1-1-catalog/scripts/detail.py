@@ -863,8 +863,10 @@ def long_term_end(d):
 
 def same_fact(kind, orig, biz):
     """原件识别值 orig 与工商值 biz 是否同一事实。前 7 类口径与 v28 的 J34 逐项对比完全一致。"""
-    if kind in ("name", "addr", "scope"):
+    if kind in ("name", "addr"):
         return nfkc_name(orig) == nfkc_name(biz)
+    if kind == "scope":                  # job_329-3：执照「…商品）。（除依法…）」对工商「…商品）（除依法…）。」，只差句号位置
+        return PUNCT_RE.sub("", unicodedata.normalize("NFKC", orig or "")) == PUNCT_RE.sub("", unicodedata.normalize("NFKC", biz or ""))
     if kind == "code":
         return biz.replace(" ", "").upper() == orig.replace(" ", "").upper()
     if kind == "legal":
@@ -875,7 +877,7 @@ def same_fact(kind, orig, biz):
         o, b = money_yuan(orig), money_yuan(biz.split("；")[0])
         return o is None or b is None or abs(o - b) < 1
     if kind == "period":
-        j_end = dates_in(biz.split("起", 1)[-1]) if "截止 " in biz else []
+        j_end = [d for d in dates_in(biz.split("起", 1)[-1]) if not long_term_end(d)] if "截止 " in biz else []
         o_end = dates_in(orig) if not any(w in orig for w in ("长期", "永久")) else []
         return (j_end[-1:] or None) == (o_end[-1:] or None)
     raise ValueError(kind)
@@ -1232,6 +1234,45 @@ def pending_rows(doc):
     return [x for x in doc["items"] if x["source"] == ""]
 
 
+# v44（job_299-v11-7，26 分钟）：平台只在上下文里保留最近约 5 张图片，更早读过的图片换成「…is offloaded…」提示。
+# 6 张图 + 主提示词“fill 一次”= 模型永远凑不齐全部图片，循环重读 6 遍。改为按材料逐份读、逐份 fill：
+# 一组最多 3 张图（场景照 3、身份证正反 2），读完这一组立刻提交，提交的行就是记录，之后不再为它重读。
+FILL_GROUP_ORDER = [  # (清单 group, 去哪里看, 是否要 Read 附件)
+    ("营业执照", "bizlicUrl", True),
+    ("开户凭证", "bankPermitUrl", True),
+    ("法人身份证", "legalIdCardFrontUrl + legalIdCardBackUrl", True),
+    ("租赁合同", "leaseAgreementUrl", True),
+    ("业务场景照片", "bizScenePhotoUrls（全部几张同一轮看）", True),
+    ("补充材料", "vatTaxCertUrl、upstreamDnstreamAgmtUrl、noTaxCertSbUrl", True),
+    ("办公场所视频", "ReadVideo 的回答（不要 Read 视频文件）", False),
+    ("请求参数", "请求 JSON", False),
+    ("工商", "init 已预填；剩余行按 desc 从工商落盘文件的 init 输出取", False),
+]
+
+
+def material_progress(rows):
+    """待填行按材料分组：[(group, where, needs_read, [ids])]，按 FILL_GROUP_ORDER 排，清单里新出现的组排在最后。"""
+    group_of = {i["id"]: i.get("group") for i in load_items()}   # 明细行不带 group，按清单查
+    by_group = {}
+    for x in rows:
+        by_group.setdefault(group_of.get(x["id"]) or "其他", []).append(x["id"])
+    known = [g for g, _, _ in FILL_GROUP_ORDER]
+    out = [(g, w, r, by_group[g]) for g, w, r in FILL_GROUP_ORDER if g in by_group]
+    out += [(g, "按条目 desc", True, ids) for g, ids in by_group.items() if g not in known]
+    return out
+
+
+def print_material_plan(pend):
+    groups = material_progress(pend)
+    if not groups:
+        return
+    print("BY_MATERIAL 按材料逐份处理（读一份 → 立刻 fill 这一份 → 再读下一份；不要攒到最后一次提交）：" +
+          "；".join("%s %d 行" % (g, len(ids)) for g, _, _, ids in groups))
+    g, where, needs_read, ids = groups[0]
+    print("NEXT_MATERIAL %s｜看：%s｜本次 fill 只交这一组：%s" % (g, where, "、".join(ids)) +
+          ("｜图片/PDF 本轮看完就提交；之后上下文里出现「…is offloaded…」表示已经看过，不是读取失败，不要为它重读" if needs_read else ""))
+
+
 def report(rid, doc, st, header=False):
     pend = pending_rows(doc)
     ys = sum(1 for x in doc["items"] if x["source"].startswith("Y｜"))
@@ -1255,6 +1296,7 @@ def report(rid, doc, st, header=False):
         print("NEED_REVIEW %d 行依据已填但脚本算不出（依据原文读不出所需日期/名称），请看依据原文后用 fill 提交（不要重交依据）：%s" % (
             len(stuck), "、".join("%s←%s" % (x["id"], ",".join("%s=%s" % (f, src_of[f]) for f in specs[x["id"]]["from"])) for x in stuck)))
     if pend:
+        print_material_plan(pend)
         print("PENDING 待填 %d 行（id|name|desc）——读材料后用 fill 提交；取不到写 null + Rxx｜具体原因：" % len(pend))
         for x in pend:
             print("%s|%s|%s" % (x["id"], x["name"], x["desc"]))

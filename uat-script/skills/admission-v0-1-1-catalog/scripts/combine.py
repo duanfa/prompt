@@ -207,6 +207,32 @@ def comment_parts(r):
     return desc.rstrip("。"), extra
 
 
+def hit_keywords(r):
+    """引擎对关键词类规则（如机构规则 CONTAINS [..]）返回 "hit": [命中的关键词]；字符串也接受。去空、去重、保序。"""
+    v = r.get("hit")
+    if isinstance(v, str):
+        v = [v]
+    if not isinstance(v, list):
+        return []
+    return list(dict.fromkeys(str(x).strip() for x in v if x is not None and str(x).strip()))
+
+
+def hit_sentence(h):
+    """带 hit 的命中规则：关键词和 comment 拼成一句给客户看的话，如「命中关键词「使用的应用」，触发风控行业限制，不予准入」。"""
+    kws = h.get("hit") or []
+    if not kws:
+        return ""
+    desc, _ = comment_parts(h)
+    return plain("命中关键词%s%s" % ("、".join("「%s」" % k for k in kws), "，" + desc if desc else ""))
+
+
+def with_hit(text, rids, byid):
+    """把这条依据/下一步涉及的带 hit 规则的那句话放在开头；文字里已经有这句就不重复。"""
+    heads = [x for x in dict.fromkeys(hit_sentence(byid[i]) for i in rids if i in byid) if x]
+    heads = [x for x in heads if x not in text]
+    return "；".join(heads + [text]) if heads else text
+
+
 def ladder():
     return ct.CONFIG["riskLadder"]
 
@@ -297,7 +323,7 @@ def make_hits(path, rid=None):
                      "atConclusionLevel": an["lv"] is not None and x["lv"] == an["lv"],
                      "reason": r.get("reason") or "", "comment": r.get("comment") or "",
                      "stage": stage_of(r), "ruleSource": r.get("ruleSource") or "",
-                     "expression": r.get("expression")})
+                     "expression": r.get("expression"), "hit": hit_keywords(r)})
     with open(path, "rb") as f:
         sha = hashlib.sha256(f.read()).hexdigest()
     return {
@@ -733,7 +759,12 @@ def notice_compare(cond, row, by_name):
     other = by_name[m.group(1)]
     if not (has_value(row) and has_value(other)):
         return None
-    same = dt.nfkc_name(str(row["value"])) == dt.nfkc_name(str(other["value"]))
+    pair = next((p for p in dt.PAIRS if {p[0], p[1]} == {row.get("id"), other.get("id")}), None)
+    if pair:                             # 工商比对对：按比较类型判（job_329-3：执照「人民币壹佰万元」对工商「100.000000」被字面判为不一致）
+        o, b = (row, other) if row.get("id") == pair[0] else (other, row)
+        same = dt.same_fact(pair[3], str(o["value"]), str(b["value"]))
+    else:
+        same = dt.nfkc_name(str(row["value"])) == dt.nfkc_name(str(other["value"]))
     return same if m.group(2) == "一致" else not same
 
 
@@ -844,6 +875,12 @@ def print_need_basis(rid, doc):
     fp_ = os.path.join("work", rid, "input-extract-detail.json")
     if os.path.isfile(fp_) and flex_job_notes({x["id"]: x for x in ct.load(fp_)["items"]}):
         print("FLEX_JOB 企业属灵工受限行业，但本次招聘的是临时辅助岗位：脚本已在“注意”里写了例外提醒。命中行业类规则时，下一步可建议对方补充岗位说明（工作内容、地点、时长，说明不涉及本行业业务），供人工核实；不要在依据里否定规则结论，也不要在 analysis 里重复。")
+    kw_hits = [h for h in doc["hits"] if h.get("hit")]
+    if kw_hits and not release:
+        print("HIT_KEYWORDS 以下命中规则带命中关键词，脚本会把「命中关键词…，comment 描述」放在引用该规则的那条依据/下一步开头；"
+              "你的 text 不用再复述关键词和 comment，只写本次资料哪里出现了它、需要怎么处理（关键词可以放进「」）：")
+        for h in kw_hits:
+            print("  %s｜%s" % (h["ruleId"], hit_sentence(h)))
     print_notice_hint(rid)
     q = quotable(rid)
     if q:
@@ -1005,6 +1042,10 @@ def cmd_summary(a):
             draft = draft if isinstance(draft, dict) else {}
             draft["basis"] = draft.get("basis") if isinstance(draft.get("basis"), list) else []
         hay, errs, seen, tried = evidence_text(a.rid), [], set(), set()
+        byid = {h["ruleId"]: h for h in hits}
+        kw_all = [k for h in hits for k in (h.get("hit") or [])]
+        if hay is not None and kw_all:          # 命中关键词来自规则，不在提交资料里，也允许放进「」
+            hay = hay + "\n" + "\n".join(kw_all)
         if hay is None:
             print("WARN 没有找到 work/%s/input-extract-detail.json，「」引文无法核对提交资料原文（不影响其余校验）" % a.rid)
         for k, it in enumerate(draft["basis"], 1):
@@ -1025,7 +1066,7 @@ def cmd_summary(a):
                 tried.update(rids)
                 continue
             seen.update(rids)
-            basis.append(it["text"].strip().rstrip("。；"))
+            basis.append(with_hit(it["text"].strip().rstrip("。；"), rids, byid))
         if release:
             if not (RELEASE_BASIS[0] <= len(draft["basis"]) <= RELEASE_BASIS[1]):
                 errs.append("通过的依据应写 %d–%d 条（约 5 条），现在 %d 条" % (RELEASE_BASIS[0], RELEASE_BASIS[1], len(draft["basis"])))
@@ -1058,7 +1099,7 @@ def cmd_summary(a):
                         errs.append(e + ("（这条已带 %s，只改文字即可）" % ",".join(rids2) if rids2 else ""))
                         n_tried.update(rids2)
                     else:
-                        nxt.append(t.strip())
+                        nxt.append(with_hit(t.strip(), [i for i in rids2 if i in other_ids], byid))
                         n_seen.update(rids2)
                         if not any(i in other_ids for i in rids2):
                             n_plain += 1
@@ -1077,13 +1118,12 @@ def cmd_summary(a):
             if release:
                 basis = basis[:RELEASE_BASIS[1]] or [cfg["release"].get("basisFallback", "已提交资料经规则校验，未命中需拦截或转人工的规则")]
             else:
-                byid = {h["ruleId"]: h for h in hits}
                 for rid_ in sorted(allowed - seen):
-                    basis.append(fallback_basis(byid[rid_]))
+                    basis.append(hit_sentence(byid[rid_]) or fallback_basis(byid[rid_]))
                 if not nxt:
                     nxt = [fallback_next(h) for h in at_level][:MAX_NEXT]
                 for rid_ in sorted(other_ids - n_seen):
-                    nxt.append(fallback_next(byid[rid_], other=True))
+                    nxt.append(with_hit(fallback_next(byid[rid_], other=True), [rid_], byid))
                 nxt = nxt[:MAX_NEXT + len(other_lv)]
         if lenient_log:
             for e in lenient_log:
