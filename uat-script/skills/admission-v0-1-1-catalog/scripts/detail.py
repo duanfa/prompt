@@ -846,8 +846,19 @@ PAIRS = [
     ("B10", "J08", "注册资本", "money"),          # v33：执照「壹佰万元」对工商「500万元」两次运行都没人发现；只进 conflicts
 ]
 J34_PAIRS = 7
-OUTCOME_LABEL = {"corrected": "更正", "confirmed_diff": "确认不一致", "unstable": "两次识别不一致", "unreadable": "无法确认"}
+# v43（SHMX-2985）：开户许可证户名原文「…有限公同」被识别成「…有限公司」，与工商一致，不出 RECHECK，RULE-DOC-014 漏命中。
+# 名称类条目与工商一致时也要逐字复核一次：复核提示不给工商值和首次识别值，证据须逐字拆写。
+VERBATIM_KINDS = ("name",)
+# 逐字复核发现疑似错字时，同一材料的伪造嫌疑条目若已记 false（「未见违背常识」），改为 N R06 交人工复核（不判 true）
+FORGERY_OF = {"B01": "B23", "D01": "D12", "G02": "G08"}
+OUTCOME_LABEL = {"corrected": "更正", "confirmed_diff": "确认不一致", "unstable": "两次识别不一致", "unreadable": "无法确认",
+                 "confirmed_same": "逐字确认一致"}
 DERIVE_DEP_RE = re.compile(r"^Y｜派生:([A-Z0-9,-]+)｜")
+
+
+def long_term_end(d):
+    """工商用 9999-xx-xx 之类的占位截止日表示“长期”（豆包 job_329-3：D.operationEnddate=9999-09-09 被当成与执照「至长期」不一致）。"""
+    return d is not None and d.year >= 9000
 
 
 def same_fact(kind, orig, biz):
@@ -945,9 +956,24 @@ def confirm_suffix(st, orig):
     return "【已二次识别确认】" if (st.get("rechecked") or {}).get(orig, {}).get("outcome") == "confirmed_diff" else ""
 
 
+def needs_recheck(kind, status):
+    """diff：与工商不一致，回看原件；verbatim：名称类与工商一致，也要逐字复核（防止错字被按常见写法纠正）。"""
+    if status == "diff":
+        return "diff"
+    if status == "same" and kind in VERBATIM_KINDS:
+        return "verbatim"
+    return None
+
+
 def recheck_pending(doc, st):
     done = st.get("rechecked") or {}
-    return [(o, b, l) for o, b, l, k, status in pair_rows(doc) if status == "diff" and o not in done]
+    return [(o, b, l, needs_recheck(k, status)) for o, b, l, k, status in pair_rows(doc)
+            if needs_recheck(k, status) and o not in done]
+
+
+def spelled(v):
+    """逐字拆写：「杭州浮岛」→「杭/州/浮/岛」（忽略空白）。"""
+    return "/".join(re.sub(r"\s", "", unicodedata.normalize("NFKC", v or "")))
 
 
 def gate_problems(doc, st):
@@ -955,7 +981,12 @@ def gate_problems(doc, st):
     probs = []
     rp = recheck_pending(doc, st)
     if rp:
-        probs.append("RECHECK 工商与原件识别不一致 %d 项尚未二次识别复核：%s" % (len(rp), "、".join("%s(%s)" % (o, l) for o, _, l in rp)))
+        diff = [(o, l) for o, _, l, m in rp if m == "diff"]
+        verb = [(o, l) for o, _, l, m in rp if m == "verbatim"]
+        if diff:
+            probs.append("RECHECK 工商与原件识别不一致 %d 项尚未二次识别复核：%s" % (len(diff), "、".join("%s(%s)" % x for x in diff)))
+        if verb:
+            probs.append("RECHECK 名称类条目 %d 项尚未逐字复核（与工商一致也要回看原件）：%s" % (len(verb), "、".join("%s(%s)" % x for x in verb)))
     stale = list(st.get("stale") or [])
     if stale:
         probs.append("STALE 以下由模型写入的派生行，其依据行已被修改，须重新判断后用 fill --force 重提：" + "、".join(stale))
@@ -1009,7 +1040,13 @@ def mark_stale(doc, st, before, skip):
 def recheck_lines(doc, st):
     by = {x["id"]: x for x in doc["items"]}
     lines = []
-    for o, b, l in recheck_pending(doc, st):
+    for o, b, l, mode in recheck_pending(doc, st):
+        if mode == "verbatim":
+            # 不给首次识别值和工商值，只给栏位位置，避免照着常见写法看
+            lines.append("RECHECK_ITEM %s|%s（逐字复核）|栏位=%s|只看原件该栏，逐字照抄，错字/异体字原样保留，"
+                         "证据写「逐字：甲/乙/丙…」把名称每个字用 / 拆开，末尾两字单独确认" % (
+                             o, by[o]["name"], by[o]["source"][2:].split("｜", 1)[0][:80]))
+            continue
         lines.append("RECHECK_ITEM %s|%s|首次识别=%s|首次来源=%s|工商 %s=%s|工商来源=%s" % (
             o, l, by[o]["value"], by[o]["source"][2:120], b, by[b]["value"], by[b]["source"][2:100]))
     return lines
@@ -1226,7 +1263,8 @@ def report(rid, doc, st, header=False):
     for ln in recheck_lines(doc, st):
         print(ln)
     if recheck_pending(doc, st):
-        print("→ 回看这些原件栏位（PDF 到对应页码）重新识别一次，用 detail.py recheck 提交；每项只能复核一次。工商值不得直接覆盖原件值。")
+        print("→ 回看这些原件栏位（PDF 到对应页码）重新识别一次，用 detail.py recheck 提交；每项只能复核一次。工商值不得直接覆盖原件值。"
+              "逐字复核项 text 写「来源｜逐字：甲/乙/丙…」，按原件字形照抄，不按常见写法纠正。")
     vl = verify_lines(doc, st)
     for ln in vl:
         print(ln)
@@ -1427,7 +1465,7 @@ def cmd_recheck(a):
     spec = read_stdin("recheck", a.rid)
     by = {x["id"]: x for x in doc["items"]}
     pairs = {p[0]: p for p in PAIRS}
-    status = {p[0]: p[4] for p in pair_rows(doc)}
+    status = {p[0]: needs_recheck(p[3], p[4]) for p in pair_rows(doc)}
     before = snapshot(doc)
     errs, done, lines = [], [], []
     for r in spec.get("rows") or []:
@@ -1441,9 +1479,10 @@ def cmd_recheck(a):
         if oid in st["rechecked"]:
             errs.append("%s 已经复核过一次，不再复核（每项只复核一次）" % oid)
             continue
-        if status[oid] != "diff":
+        if not status[oid]:
             errs.append("%s 与工商一致或任一侧没有值，无需复核" % oid)
             continue
+        verbatim = status[oid] == "verbatim"
         if not isinstance(text, str) or not text.strip():
             errs.append("%s 的 text 为空" % oid)
             continue
@@ -1456,6 +1495,14 @@ def cmd_recheck(a):
                 errs.append("%s 二次仍无法确认时 text 须为「Rxx｜具体原因」；你写的是：%s" % (oid, text[:60]))
                 continue
             code, why = text.split("｜", 1)
+            if verbatim:
+                o["value"], o["source"] = None, "N｜%s｜首次识别为「%s」，逐字复核无法确认（%s），不取值" % (code, v1, why)
+                outcome = "unreadable"
+                conflict = "%s：逐字复核无法确认原件名称（首次识别「%s」），未作为已核实" % (label, v1)
+                st["rechecked"][oid] = {"outcome": outcome, "first": v1, "second": v2, "mode": "verbatim", "conflict": conflict}
+                done.append(oid)
+                lines.append("%s %s（逐字复核）：%s" % (oid, label, OUTCOME_LABEL[outcome]))
+                continue
             o["value"], o["source"] = None, "N｜%s｜首次识别为「%s」，与工商 %s=「%s」不一致，二次复核无法确认（%s），不取值" % (code, v1, biz, bv, why)
             outcome = "unreadable"
             conflict = "%s：首次识别「%s」与工商 %s「%s」不一致，二次复核无法确认，均未作为已核实" % (label, v1, biz, bv)
@@ -1468,6 +1515,27 @@ def cmd_recheck(a):
                 continue
             ev = text.split("｜", 1)[1]
             conflict = None
+            if verbatim:
+                if spelled(v2) not in re.sub(r"\s", "", unicodedata.normalize("NFKC", ev)):
+                    errs.append("%s 逐字复核的证据须含「逐字：%s」（二次识别值每个字用 / 拆开，按原件字形照抄）" % (oid, spelled(v2)))
+                    continue
+                if same_reading(kind, v2, v1):
+                    outcome = "confirmed_same"
+                    o["source"] = o["source"] + "；逐字复核：%s，与首次一致" % ev[:80]
+                else:
+                    outcome = "unstable"
+                    o["value"], o["source"] = None, "N｜R06｜逐字复核与首次识别不同（首次「%s」，逐字复核「%s」），首次与工商 %s 一致而逐字复核不一致，疑似错字被按常见写法纠正，需人工核对原件，不取值" % (v1, v2, biz)
+                    conflict = "%s：原件名称疑似有错字——逐字复核读作「%s」，首次识别「%s」与工商 %s「%s」一致，需人工核对原件" % (label, v2, v1, biz, bv)
+                    f = by.get(FORGERY_OF.get(oid))
+                    if f and f["source"].startswith("Y｜") and f["value"] == "false":
+                        f["value"], f["source"] = None, "N｜R06｜%s 逐字复核读作「%s」，名称疑似有错字，不能判未见违背常识；单凭错字不判伪造，需人工复核原件（原判：%s）" % (oid, v2, f["source"][2:80])
+                        lines.append("%s 伪造嫌疑原记 false，因名称疑似错字改为 N R06" % f["id"])
+                st["rechecked"][oid] = {"outcome": outcome, "first": v1, "second": v2, "mode": "verbatim"}
+                if conflict:
+                    st["rechecked"][oid]["conflict"] = conflict
+                done.append(oid)
+                lines.append("%s %s（逐字复核）：%s" % (oid, label, OUTCOME_LABEL[outcome]))
+                continue
             if same_reading(kind, v2, v1):
                 outcome = "confirmed_diff"
                 o["source"] = o["source"] + "；复核：二次识别（%s）与首次一致，与工商 %s=「%s」不同，确认不一致，保留原件识别值，未用工商值覆盖" % (ev[:80], biz, bv)

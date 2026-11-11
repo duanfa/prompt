@@ -1,11 +1,11 @@
 {
   "contract": "admission-noshell-v0-1-1",
   "revision": "0.1.1",
-  "runtime_characters": 55302,
+  "runtime_characters": 56032,
   "files": [
     {
       "path": "主提示词_v0-1-1_编排版.md",
-      "sha256": "dc10f4e65daea8dd33ce0267650c8ece1ebe48e5900f769670bdc12b08b80e7a"
+      "sha256": "3dbaba11ca9f5e977ec9d4f81fedfa78885a0c5f80be7847c344564881e72dcb"
     },
     {
       "path": "skills/admission-v0-1-1-business/SKILL.md",
@@ -29,7 +29,7 @@
     },
     {
       "path": "skills/admission-v0-1-1-materials/SKILL.md",
-      "sha256": "6e85a9e3fd110d04ce0e8aff8229c741134a63e3d9419944edb44b4594edd55e"
+      "sha256": "71eaed4ca90bdccbe207b35c106d67f7cb84d307e39a09f99065b0e647634632"
     },
     {
       "path": "skills/admission-v0-1-1-output/SKILL.md",
@@ -40,5 +40,5 @@
       "sha256": "5cae8da106cccdbcd705889dae3996ab9b4018449271ffa1f62863a067a5c38a"
     }
   ],
-  "script_characters": 208386
+  "script_characters": 211842
 }

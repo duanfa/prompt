@@ -22,11 +22,28 @@ def read(name):
     return open(os.path.join(FX, name), encoding="utf-8").read()
 
 
+def auto_verbatim(ws, runner=None):
+    """v43：模拟模型对名称类条目逐字复核且读法与首次一致（逐字确认一致）。
+    只用于与逐字复核无关的旧用例；逐字复核本身的行为见 VerbatimRecheckTests。"""
+    runner = runner or (lambda script, *args, stdin="": run(ws, script, *args, stdin=stdin, _verify=False))
+    rc, out = runner("detail.py", "show", "--rid", RID, "--pending")
+    ids = [ln[len("RECHECK_ITEM "):].split("|")[0] for ln in out.splitlines()
+           if ln.startswith("RECHECK_ITEM ") and "（逐字复核）" in ln]
+    if not ids:
+        return ""
+    fp = os.path.join(ws, "work", RID, "input-extract-detail.json")
+    with open(fp, encoding="utf-8") as f:
+        by = {x["id"]: x for x in json.load(f)["items"]}
+    rows = [[i, by[i]["value"], "回归夹具｜逐字：" + "/".join(by[i]["value"].replace(" ", ""))] for i in ids]
+    rc, out = runner("detail.py", "recheck", "--rid", RID, stdin=json.dumps({"rows": rows}, ensure_ascii=False))
+    return out
+
+
 def auto_verify(ws, runner=None):
     """模拟模型对清单 verify 条目做语义校验：有值判 pass；空值先 fail 再取一次（仍为空），再判 fail。
     只用于与 verify 无关的旧用例，让它们照常走到 build；verify 本身的行为见 VerifyTests。"""
     runner = runner or (lambda script, *args, stdin="": run(ws, script, *args, stdin=stdin, _verify=False))
-    out_all = ""
+    out_all = auto_verbatim(ws, runner)
     for _ in range(3):
         rc, out = runner("detail.py", "show", "--rid", RID, "--pending")
         rows = []
@@ -1355,6 +1372,7 @@ class VerifyTests(unittest.TestCase):
         with open(fp, encoding="utf-8") as f:
             pend = [x["id"] for x in json.load(f)["items"] if x["source"] == "" and x["id"] not in derived]
         rc, self.fill_out = run(self.ws, "detail.py", "fill", "--rid", RID, stdin=json.dumps({"rows": [[i, None, AUTO_FILL_WHY] for i in pend]}, ensure_ascii=False))
+        self.fill_out += auto_verbatim(self.ws)          # v43：名称逐字复核完成后才出 VERIFY_ITEM
 
     def tearDown(self):
         shutil.rmtree(self.ws, ignore_errors=True)
@@ -1427,6 +1445,67 @@ class VerifyTests(unittest.TestCase):
             self.assertTrue(dt.check_verify_specs([{"id": "X1", "verify": ""}]))
         finally:
             sys.path.remove(SCRIPTS)
+
+
+class VerbatimRecheckTests(unittest.TestCase):
+    """v43（SHMX-2985）：开户许可证户名原文「…有限公同」被识别成「…有限公司」，与工商一致，不出 RECHECK，RULE-DOC-014 漏命中。
+    名称类条目（B01/D01/G02）与工商一致也要逐字复核一次。"""
+    def setUp(self):
+        self.ws = tempfile.mkdtemp()
+        for f in ("biz_D.txt", "biz_B.txt", "biz_T.txt", "rules.json", "props.json"):
+            shutil.copy(os.path.join(FX, f), self.ws)
+        run(self.ws, "detail.py", "init", "--biz", "biz_D.txt", "biz_B.txt", "biz_T.txt", "--rules", "rules.json", stdin=read("init_spec.json"))
+        rc, self.fill_out = run(self.ws, "detail.py", "fill", "--rid", RID, stdin=read("fill_spec.json"))
+        pend = [i for i, x in self.items().items() if x["source"] == "" and i != "G12"]
+        rc, out = run(self.ws, "detail.py", "fill", "--rid", RID, stdin=json.dumps({"rows": [[i, None, AUTO_FILL_WHY] for i in pend]}, ensure_ascii=False))
+        self.fill_out += out
+        self.name = self.items()["D01"]["value"]
+
+    def tearDown(self):
+        shutil.rmtree(self.ws, ignore_errors=True)
+
+    def items(self):
+        with open(os.path.join(self.ws, "work", RID, "input-extract-detail.json"), encoding="utf-8") as f:
+            return {x["id"]: x for x in json.load(f)["items"]}
+
+    def recheck(self, rows):
+        return run(self.ws, "detail.py", "recheck", "--rid", RID, stdin=json.dumps({"rows": rows}, ensure_ascii=False))
+
+    @staticmethod
+    def spell(v):
+        return "开户许可证 bankPermitUrl p1 账户名称栏｜逐字：" + "/".join(v)
+
+    def test_same_as_registry_still_needs_verbatim_recheck_without_showing_values(self):
+        line = next(ln for ln in self.fill_out.splitlines() if ln.startswith("RECHECK_ITEM D01|"))
+        self.assertIn("逐字复核", line)
+        self.assertNotIn(self.name, line)                 # 不给首次值/工商值，避免照着看
+        self.assertNotIn("PASS", self.fill_out)
+        rc, out = run(self.ws, "combine.py", "build", "--rid", RID, "--rules", "rules.json", "--props", "props.json", _verify=False)
+        self.assertEqual(rc, 2, out)
+
+    def test_typo_found_on_verbatim_recheck_becomes_N_and_conflict(self):
+        typo = self.name[:-1] + "同"
+        rc, out = self.recheck([["D01", typo, self.spell(typo)]])
+        self.assertEqual(rc, 0, out)
+        d01 = self.items()["D01"]
+        self.assertIsNone(d01["value"])
+        self.assertTrue(d01["source"].startswith("N｜R06｜逐字复核与首次识别不同"), d01["source"])
+        doc = json.load(open(os.path.join(self.ws, "work", RID, "input-extract-detail.json"), encoding="utf-8"))
+        self.assertTrue(any("疑似有错字" in c and typo in c for c in doc["notes"]["conflicts"]), doc["notes"]["conflicts"])
+        d12 = self.items()["D12"]
+        self.assertIsNone(d12["value"])
+        self.assertTrue(d12["source"].startswith("N｜R06｜D01 逐字复核"), d12["source"])
+
+    def test_confirmed_same_keeps_value_and_evidence_must_be_spelled(self):
+        rc, out = self.recheck([["D01", self.name, "开户许可证 p1｜账户名称 " + self.name]])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("逐字：", out)
+        rc, out = self.recheck([["D01", self.name, self.spell(self.name)]])
+        self.assertEqual(rc, 0, out)
+        d01 = self.items()["D01"]
+        self.assertEqual(d01["value"], self.name)
+        self.assertIn("逐字复核", d01["source"])
+        self.assertNotIn("RECHECK_ITEM D01|", out)
 
 
 if __name__ == "__main__":
