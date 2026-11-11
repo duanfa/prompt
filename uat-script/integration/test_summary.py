@@ -219,6 +219,27 @@ class T(unittest.TestCase):
         self.assertIn("## 结论\n拦截｜不予准入，请勿自动放行", s)
         self.assertEqual(len(self.part(s, "## 依据", "## 下一步")), 2)
 
+    def test_hit_keywords_are_joined_with_comment_into_summary(self):
+        """命中规则带非空 hit：命中关键词与 comment 业务说明拼成一句写进对应依据/下一步；适用阶段不拼入；不重复。"""
+        a = mk("R-A", "风控行业限制", "true", "拦截", comment="触发风控行业限制，不予准入｜适用阶段：准入")
+        a["hit"] = ["使用的应用", "使用的应用", " "]
+        b = mk("R-B", "敏感词关注", "true", "转人工", comment="涉及敏感词，需人工复核｜适用阶段：准入")
+        b["hit"] = "代运营"
+        c = mk("R-C", "无命中词", "true", "转人工", comment="其他风险点｜适用阶段：准入")
+        eng = self.put("e.json", [a, b, c])
+        rc, out = self.run_("result", "--rid", "r1", "--file", eng)
+        self.assertIn("HIT_KEYWORDS R-A｜命中关键词「使用的应用」，触发风控行业限制，不予准入", out)
+        self.assertNotIn("HIT_KEYWORDS R-C", out)
+        nxt = ["更换不涉及受限行业的业务后重新提交", {"ruleIds": ["R-B", "R-C"], "text": "另有风险点转人工核验，请配合说明情况"}]
+        rc, out = self.summary(eng, [{"ruleIds": ["R-A"], "text": "业务涉及受限行业，平台不予准入"}], nxt)
+        self.assertEqual(rc, 0, out)
+        s = self.final()["summary"]
+        self.assertIn("命中关键词「使用的应用」，触发风控行业限制，不予准入；业务涉及受限行业", s)
+        self.assertIn("命中关键词「代运营」，涉及敏感词，需人工复核；另有风险点转人工核验", s)
+        self.assertEqual(s.count("命中关键词「使用的应用」"), 1)
+        self.assertNotIn("适用阶段", s)
+        self.assertNotIn("命中关键词「」", s)
+
     def test_other_hit_levels_must_be_covered_in_next_steps(self):
         rules = [mk("RULE-AA-001", "命中拦截甲", "true", "拦截", comment="企业名称含禁用词，不得入驻｜适用阶段：准入"),
                  mk("RULE-BB-001", "命中建议拦截", "true", "建议拦截", comment="股东存在关联风险｜适用阶段：准入"),

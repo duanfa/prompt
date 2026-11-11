@@ -63,7 +63,7 @@ ONLINE_PREFIX = "官网/公众号"                                  # 官网类�
 ANCHORS = {
     "A01": "entpId", "A02": "entpName", "A03": "rqId", "A04": "hrInstId", "A05": "requestId", "A06": "基准日",
     "A07": "交付要求", "A08": "项目内容", "A09": "项目简介", "A10": "开票类目", "A11": "官网", "A12": "附件盘点", "A13": "岗位名称",
-    "B01": "名称", "B02": "类型", "B03": "信用代码", "B04": "成立日期", "B05": "营业期限", "B06": "法定代表人", "B07": "地址",
+    "B01": "名称", "B02": "类型", "B03": "信用代码", "B04": "成立日期", "B05": "营业期限开始", "B05-1": "营业期限结束", "B06": "法定代表人", "B07": "地址",
     "B08": "经营范围", "B10": "注册资本", "B11": "有效期", "B16": "成立月数", "B17": "主体类型", "B18": "分公司",
     "B19": "合伙", "B26": "灵工平台",
     "C02": "姓名", "D01": "户名", "D02": "账户性质", "D08": "法定代表人",
@@ -836,7 +836,8 @@ PAIRS = [
     ("B03", "J02", "信用代码", "code"),
     ("B06", "J07", "法定代表人", "legal"),
     ("B04", "J09", "成立日期", "date"),
-    ("B05", "J10", "营业期限", "period"),
+    ("B05", "J10", "营业期限开始", "period_start"),
+    ("B05-1", "J10", "营业期限结束", "period_end"),
     ("B07", "J13", "地址", "addr"),
     ("B08", "J16", "经营范围", "scope"),
     ("C02", "J07", "身份证姓名与工商法定代表人", "legal"),
@@ -845,7 +846,7 @@ PAIRS = [
     ("G02", "J01", "租赁合同承租方与工商名称", "name"),
     ("B10", "J08", "注册资本", "money"),          # v33：执照「壹佰万元」对工商「500万元」两次运行都没人发现；只进 conflicts
 ]
-J34_PAIRS = 7
+J34_PAIRS = 8
 OUTCOME_LABEL = {"corrected": "更正", "confirmed_diff": "确认不一致", "unstable": "两次识别不一致", "unreadable": "无法确认"}
 DERIVE_DEP_RE = re.compile(r"^Y｜派生:([A-Z0-9,-]+)｜")
 
@@ -863,7 +864,10 @@ def same_fact(kind, orig, biz):
     if kind == "money":
         o, b = money_yuan(orig), money_yuan(biz.split("；")[0])
         return o is None or b is None or abs(o - b) < 1
-    if kind == "period":
+    if kind == "period_start":                     # 工商 J10 形如「2024-12-03 起，截止 …」；工商没返回起始日不比较
+        j_start = dates_in(biz.split("起", 1)[0])
+        return not j_start or dates_in(orig)[:1] == j_start[:1]
+    if kind == "period_end":                       # 工商截止日未返回 = 长期/未载明；原件「长期/永久」视为无截止日
         j_end = dates_in(biz.split("起", 1)[-1]) if "截止 " in biz else []
         o_end = dates_in(orig) if not any(w in orig for w in ("长期", "永久")) else []
         return (j_end[-1:] or None) == (o_end[-1:] or None)
@@ -915,7 +919,7 @@ def same_reading(kind, a, b):
         return True
     if PUNCT_RE.sub("", unicodedata.normalize("NFKC", a or "")) == PUNCT_RE.sub("", unicodedata.normalize("NFKC", b or "")):
         return True
-    if kind in ("date", "period"):
+    if kind in ("date", "period_start", "period_end"):
         da, db = dates_in(a), dates_in(b)
         long_a, long_b = any(w in a for w in ("长期", "永久")), any(w in b for w in ("长期", "永久"))
         return bool(da) and da == db and long_a == long_b
@@ -975,13 +979,48 @@ def verify_pending(doc, st):
             not (i in done and done[i].get("value") == by[i]["value"] and done[i].get("source") == by[i]["source"])]
 
 
+# 名称类条目逐字复核（v0.1.1）：开户名称常把原件「有限公同」读成「有限公司」，只靠提示词没压住。
+# verify 判 pass 的理由必须带「逐字：甲/乙/…；末字：X；字形：…」，逐字拼起来要等于当前值、末字要等于当前值最后一个字；
+# 末字是形近字（司/同/可）时字形描述必须写左侧有无竖笔（同=冂框左右都有竖；司=左侧敞开）。脚本只核对格式与一致性，不替模型认字。
+GLYPH_VERIFY = ("D01",)
+GLYPH_CONFUSABLE = "司同可"
+GLYPH_FORMAT = "逐字：甲/乙/丙…；末字：X；字形：本次原件末字实际可见的笔画"
+
+
+def glyph_reason_problem(value, why):
+    """名称逐字复核理由的格式问题（None = 合格）。"""
+    v = re.sub(r"\s", "", unicodedata.normalize("NFKC", value or ""))
+    m = re.search(r"逐字[:：]\s*([^；;]+)", why)
+    if not m:
+        return "理由须写「%s」" % GLYPH_FORMAT
+    chars = [c for c in re.split(r"[/／、,，\s]+", unicodedata.normalize("NFKC", m.group(1))) if c]
+    if "".join(chars) != v or any(len(c) != 1 for c in chars):
+        return "「逐字」须把当前值逐个字用 / 分开写全（当前值「%s」，你写的是「%s」）；看到的字与当前值不同就交 fail 更正" % (value, m.group(1).strip())
+    m = re.search(r"末字[:：]\s*「?(\S)", why)
+    if not m or m.group(1) != v[-1:]:
+        return "「末字」须写当前值最后一个字「%s」；原件末字不是它就交 fail 更正" % v[-1:]
+    m = re.search(r"字形[:：]\s*([^；;]+)", why)
+    if not m or len(m.group(1).strip()) < 6:
+        return "「字形」须写本次原件末字实际可见的判别笔画（至少 6 个字）"
+    if v[-1:] in GLYPH_CONFUSABLE and "左" not in m.group(1):
+        return "末字「%s」与「司/同/可」形近：「字形」须写清本次原件末字左侧有没有竖笔（同：冂框左右都有竖；司：左侧敞开只有横折钩）" % v[-1:]
+    shape = m.group(1)
+    if v[-1:] == "司" and re.search(r"左(?:侧|边)?(?:有|带)(?:一)?竖|冂框?(?:封闭|左右)", shape):
+        return "「字形」写的是左侧有竖笔/冂框，那是「同」不是「司」；按原件交 fail，把当前值更正为实际原文"
+    if v[-1:] == "同" and re.search(r"左(?:侧|边)?(?:无|没有|不带)竖|左(?:侧|边)?敞开", shape):
+        return "「字形」写的是左侧无竖笔/敞开，那是「司」不是「同」；回看原件确认后交 fail 更正"
+    return None
+
+
 def verify_lines(doc, st):
     by = {x["id"]: x for x in doc["items"]}
     specs = verify_specs()
     retried = set(st.get("verifyRetried") or [])
-    return ["VERIFY_ITEM %s|%s|verify=%s|当前值=%s|来源=%s|%s" % (
+    return ["VERIFY_ITEM %s|%s|verify=%s|当前值=%s|来源=%s|%s%s" % (
         i, by[i]["name"], specs[i], "(空)" if by[i]["value"] is None else by[i]["value"], by[i]["source"][:120],
-        "已再取过一次，本次是最后校验" if i in retried else "可再取一次")
+        "已再取过一次，本次是最后校验" if i in retried else "可再取一次",
+        "|pass 理由格式：%s；先单独看末字左侧有没有竖笔再定是「同」还是「司」，原件常见「有限公同」" % GLYPH_FORMAT
+        if i in GLYPH_VERIFY and by[i]["value"] is not None else "")
         for i in verify_pending(doc, st)]
 
 
@@ -1089,26 +1128,40 @@ def derive(doc, st):
         else:
             r = "其他"
         Y("B17", r, "派生:B02｜B02=%s，主体类型为%s" % (ty, r))
-    if pending("B18"):
-        t = need("B18", "B02")
-        if t:
-            Y("B18", "true" if "分公司" in t[0] else "false", "派生:B02｜B02=%s，%s「分公司」字样" % (t[0], "含" if "分公司" in t[0] else "不含"))
-    if pending("B19"):
-        t = need("B19", "B02")
-        if t:
-            Y("B19", "true" if "合伙" in t[0] else "false", "派生:B02｜B02=%s，%s「合伙」字样" % (t[0], "含" if "合伙" in t[0] else "不含"))
-    # 营业期限：有效期、快到期
+    for target, keyword in (("B18", "分公司"), ("B19", "合伙")):
+        if not pending(target):
+            continue
+        matches = [(d, by[d]["value"]) for d in ("B01", "B02")
+                   if by[d]["source"].startswith("Y｜") and keyword in by[d]["value"]]
+        if matches:
+            deps = ",".join(d for d, _ in matches)
+            evidence = "；".join("%s=%s" % (d, v) for d, v in matches)
+            Y(target, "true", "派生:%s｜%s，含「%s」字样" % (deps, evidence, keyword))
+        else:
+            t = need(target, "B01", "B02")
+            if t:
+                Y(target, "false", "派生:B01,B02｜B01=%s；B02=%s，均不含「%s」字样" % (t[0], t[1], keyword))
+    # 营业期限：B05 开始时间、B05-1 结束时间（截止日或“长期”）；有效期按结束时间判断
     if base and pending("B11"):
-        t = need("B11", "B05", "B04") if pending("B11") else None
+        t = need("B11", "B05-1")
         if t:
             long_term = any(w in t[0] for w in ("长期", "永久"))
             ds = dates_in(t[0])
-            f = parse_date(t[1])
-            if long_term and f and f <= base:
-                Y("B11", "true", "派生:B05,A06｜营业期限为「%s」，无截止日；基准日 %s 不早于成立日 %s，执照有效" % (t[0], base.isoformat(), f.isoformat()))
-            elif ds and not long_term:
+            if long_term and by["B05"]["source"] == "":
+                pass                               # 开始时间还没取，等下一次 fill
+            elif long_term:                        # 无截止日：用营业期限开始时间确认已生效；开始时间没取到时退到成立日期
+                start = next(((d, by[d]["value"], parse_date(by[d]["value"])) for d in ("B05", "B04")
+                              if by[d]["source"].startswith("Y｜") and parse_date(by[d]["value"])), None)
+                if start:
+                    d, _, f = start
+                    Y("B11", "true" if f <= base else "false", "派生:B05-1,%s,A06｜营业期限结束为「%s」，无截止日；%s %s；基准日 %s；%s" % (
+                        d, t[0], "营业期限开始" if d == "B05" else "成立日期", f.isoformat(), base.isoformat(),
+                        "已生效，执照有效" if f <= base else "尚未生效"))
+                elif all(by[d]["source"] != "" for d in ("B05", "B04")):
+                    N("B11", "R12", "B05-1 为长期，缺可用的 B05/B04 起始日期")
+            elif ds:
                 end = ds[-1]
-                Y("B11", "true" if end >= base else "false", "派生:B05,A06｜营业期限截止 %s；基准日 %s；%s" % (
+                Y("B11", "true" if end >= base else "false", "派生:B05-1,A06｜营业期限截止 %s；基准日 %s；%s" % (
                     end.isoformat(), base.isoformat(), "未届满" if end >= base else "已届满"))
     # v42：清单 derive 声明的通用派生（名称比较、期间、距到期、原样带出）；依次跑到不再有新行，支持派生行之间互相依赖
     specs = {i: d for i, d in derive_specs(load_items()).items() if i in by}
@@ -1152,7 +1205,7 @@ def derive(doc, st):
                 Y("J36", "接口未返回吊销/注销信息", "派生:J19,J20,J05｜J19、J20 为空；J05=%s，非吊销/注销/撤销；不据此写「无风险」" % (j05["value"] or "未返回"))
     # 工商与执照的一致性（前 7 对），以及身份证/开户凭证/租赁合同与工商的比对（只进 conflicts）
     if pending("J34"):
-        deps = ["J01", "J02", "J07", "J09", "J10", "J13", "J16", "B01", "B03", "B06", "B04", "B05", "B07", "B08"]
+        deps = ["J01", "J02", "J07", "J09", "J10", "J13", "J16", "B01", "B03", "B06", "B04", "B05", "B05-1", "B07", "B08"]
         t = need("J34", *deps)
         if t:
             diffs = [diff_text(by, o, b, l, k) + confirm_suffix(st, o)
@@ -1163,7 +1216,7 @@ def derive(doc, st):
             if diffs:
                 Y("J34", "不一致：" + "；".join(diffs), "派生:" + ",".join(deps) + "｜逐项对比，不裁决" + rec)
             else:
-                Y("J34", "无不一致", "派生:" + ",".join(deps) + "｜J01/J02/J07/J09/J10/J13/J16 与 B01/B03/B06/B04/B05/B07/B08 逐项一致" + rec)
+                Y("J34", "无不一致", "派生:" + ",".join(deps) + "｜J01/J02/J07/J09/J10/J10/J13/J16 与 B01/B03/B06/B04/B05/B05-1/B07/B08 逐项一致" + rec)
     if by["J34"]["source"].startswith("Y｜") and by["J34"]["value"].startswith("不一致："):
         auto_conf.append("工商与执照不一致（未裁决）：" + by["J34"]["value"][len("不一致："):])
     if by["J08"]["source"].startswith("N｜R09｜"):
@@ -1536,6 +1589,10 @@ def cmd_verify(a):
                 continue
             if x["value"] is None and re.search(r"不为空|非空|必须有值|必填", specs[i]):
                 errs.append("%s 当前值为空，不符合 verify「%s」，不能判 pass；回看材料再取一次（fail 行）" % (i, specs[i]))
+                continue
+            gp = glyph_reason_problem(x["value"], why) if i in GLYPH_VERIFY and x["value"] is not None else None
+            if gp:
+                errs.append("%s 逐字复核不合格：%s" % (i, gp))
                 continue
             st["verified"][i] = {"verdict": "pass", "reason": why, "value": x["value"], "source": x["source"]}
             lines.append("%s 通过" % i)

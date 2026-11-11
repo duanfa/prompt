@@ -15,7 +15,7 @@ metadata:
 
 | 文件 | 用途 |
 |---|---|
-| `scripts/detail.py` | 明细脚本：`init` 预填、`fill` 合并你读材料得到的行并重算派生、`recheck` 提交二次识别结果、`verify` 提交语义校验结果（不符合再取一次）、`compare`（只读，12 项比对）、`show`、`finish` |
+| `scripts/detail.py` | 明细脚本：`init` 预填、`fill` 合并你读材料得到的行并重算派生、`recheck` 提交二次识别结果、`verify` 提交语义校验结果（不符合再取一次）、`compare`（只读，13 项比对）、`show`、`finish` |
 | `scripts/combine.py` | 组装脚本：`plan`（只读，列出键与条目）、`build`（按你基于当次定义提交的 map/skip/set 组装并校验，生成并校验 `input-combine.json`，打印 `CHECK`，映射落盘 `work/<id>/key-map.json`）、`validate`；只读摘要 `rules`、`props`；`result`（从引擎原始返回过滤出命中规则，写 `work/<id>/hit-rules.json`，打印计数、漏斗结论和 `NEED_BASIS`）；`summary`（只读 hit-rules.json，校验依据/下一步草稿，渲染 summary，打印最终结果 `FINAL`）。**业务属性映射和判断由模型决定；脚本不设默认业务属性表或派生公式** |
 | `scripts/combine_tool.py`、`scripts/combine_config.json` | 上面两个脚本用的库和配置 |
 | `scripts/run_process_required.json` | 调 mcp_run_process 必带的预设键（四个标识 + 用工场景，无兜底）与枚举键兜底值，build 读取，你不用读 |
@@ -69,6 +69,9 @@ metadata:
 2. 派生条目（source 写 `派生:<依据条目ID>`）：任一依据条目为 null，则该条目必为 `N｜R12｜缺 <依据条目ID>`，不得用别的值顶替（脚本写的派生行自动处理；你写的派生行出现 STALE 时重判）。
 3. 同一事实在 notes 与 items 里不得矛盾；N 条目的原因必须与 materials 状态、视频原话、工商返回一致（R01↔materials 未提供；R02↔不可读且有具体现象；R04↔仅URL；R05↔有尝试次数；R06↔视频原话含推测措辞或该项未单独问过）。
 4. 禁止为了让 N 变 Y 而推测；红线 3、4、5 照常适用。身份证号码不抄录（清单没有此项）；开户凭证账号（D10）按清单要求提取，**value 和 source 的证据段都完整抄录原件账号栏的账号，不脱敏、不加星号、不截断**；原件上有看不清的位数时不补全、不猜，整条按 N 处理（R03 或 R06，写明哪几位看不清）。
-5. **工商与原件识别的比对**由 `detail.py` 完成（12 项，结果写 J34 与 notes.conflicts，见 materials skill 第二步半）：不一致的项必须回看原件二次识别（`recheck`），工商值不覆盖原件识别值。
+5. **工商与原件识别的比对**由 `detail.py` 完成（13 项，结果写 J34 与 notes.conflicts，见 materials skill 第二步半）：不一致的项必须回看原件二次识别（`recheck`），工商值不覆盖原件识别值。
 6. 行业代码/名称只作原文事实，不映射禁入或敏感（R10）；工商没有牌照字段，**不等于没有牌照**；单位未明示不自补，原样记。
-7. **语义校验（verify）**：清单条目带 `verify` 的（如 B01/B02/B04/B05「不为空」），在**全部值取完**（无待填、无待复核）后，fill/recheck 输出 `VERIFY_ITEM ID|名称|verify=要求|当前值=…|来源=…`。逐条按 verify 的**语义**（结合 desc，例：成立日期须来自成立日期栏、不是发证日）判断当前值是否符合，用 `detail.py verify --rid <requestId>` 提交，stdin=`{"rows":[[ID,"pass","判断理由"]]}`；不符合就回看材料**再取一次值**：`[ID,"fail","不符原因",新值或null,"来源｜证据" 或 "Rxx｜原因"]`。再取后的值会再出 `VERIFY_ITEM`（标「最后校验」），仍不符合交 `[ID,"fail","原因"]`，脚本置 `N｜R06`。每项只能再取一次；空值不能判 pass「不为空」；值之后被改动（fill --force / recheck）要重新校验。未校验完，fill 不出 PASS，finish/build 被拒。
+7. **语义校验（verify）**：清单条目带 `verify` 的，在**全部值取完**（无待填、无待复核）后，fill/recheck 输出 `VERIFY_ITEM ID|名称|verify=要求|当前值=…|来源=…`。逐条按本次 verify 的**语义**及 desc 判断，用 `detail.py verify --rid <requestId>` 提交，stdin=`{"rows":[[ID,"pass","判断理由"]]}`。
+   - B01/B02/B05/B05-1 等要求「不为空」的，空值不能判 pass；**B04 核对成立日期本栏证据，允许确认缺失**：已确认值区清楚空白、B04=null、R03 时，交 `["B04","pass","成立日期标签可见、值区清楚空白，已保留null及R03，未借用其他日期"]`；被遮挡或模糊、无法辨清时也按本次 verify 保留 null、R06，说明现象。pass 只表示提取及来源校验完成，不表示材料齐全、事实有值或准入通过。
+   - **D01 即使与工商一致也要按字形复核**：按 materials skill 从末字向前看，再正向逐字读。pass 理由**脚本会核对格式**：必须含「逐字：甲/乙/…；末字：X；字形：…」，逐字拼起来等于当前值、末字等于当前值最后一个字；末字是司/同/可时字形必须写左侧有无竖笔，写了「左侧有竖/冂框」却仍是「司」（或「左侧敞开」却是「同」）会被退回，要求交 fail 更正。字形必须是本次原件看到的笔画，不能把首次名称插斜杠当作新观察。当前值不符时，用 fail 提交实际读到的原文或 null，并重新核对 D12；不能仍用错误户名或把名称错字判为“未见嫌疑”。本版不对一致项调用 recheck。
+   - 当前值不符合要求（如借邻栏日期补 B04、把「公同」读成「公司」），回看材料**再取一次值**：`[ID,"fail","不符原因",新值或null,"来源｜证据" 或 "Rxx｜原因"]`。再取后的值会再出 `VERIFY_ITEM`（标「最后校验」），仍不符合交 `[ID,"fail","原因"]`，脚本置 `N｜R06`。每项只能再取一次；值之后被改动（fill --force / recheck）要重新校验。未校验完，fill 不出 PASS，finish/build 被拒。

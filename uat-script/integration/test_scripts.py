@@ -36,7 +36,11 @@ def auto_verify(ws, runner=None):
             f = ln[len("VERIFY_ITEM "):].split("|")
             i, empty, last = f[0], "当前值=(空)" in f, "最后校验" in ln
             if not empty:
-                rows.append([i, "pass", "回归夹具：值符合校验"])
+                v = f[3][len("当前值="):]
+                why = "回归夹具：值符合校验"
+                if i == "D01":
+                    why = "逐字：%s；末字：%s；字形：回归夹具，左侧无竖笔，横折钩敞开" % ("/".join(v), v[-1])
+                rows.append([i, "pass", why])
             elif last:
                 rows.append([i, "fail", "回归夹具：再取后仍为空"])
             else:
@@ -334,11 +338,11 @@ class ScriptTests(unittest.TestCase):
     def test_v35_warns_when_script_referenced_id_no_longer_matches(self):
         def mutate(items):
             for x in items:
-                if x["id"] == "B05":
+                if x["id"] == "B05-1":
                     x["id"] = "B99"
         out, it = self._renumbered_catalog(mutate)
-        self.assertIn("B05 在清单里不存在", out)
-        self.assertIn("B22 的 derive.from 引用了不存在的条目 B05", out)   # v42：清单 derive 引用断了 → init 失败，不悄悄留空
+        self.assertIn("B05-1 在清单里不存在", out)
+        self.assertIn("B22 的 derive.from 引用了不存在的条目 B05-1", out)   # v42：清单 derive 引用断了 → init 失败，不悄悄留空
         self.assertEqual(it, {})
 
     def test_v35_current_catalog_matches_all_anchors(self):
@@ -567,6 +571,58 @@ class ScriptTests(unittest.TestCase):
     def ready_again(self):
         shutil.rmtree(os.path.join(self.ws, "work"), ignore_errors=True)
         self.ready()
+
+    # ───── 0.1.1 本次修订：营业期限拆成开始 B05 / 结束 B05-1；分公司/合伙看名称和类型；成立日期空栏 ─────
+
+    def test_b05_split_expiry_uses_end_date(self):
+        """B05 是开始时间，B11 有效期 / B22 快到期按结束时间 B05-1 算，不再把开始日当截止日。"""
+        self.ready()
+        it = self.items()
+        self.assertEqual((it["B05"]["value"], it["B05-1"]["value"]), ("2024-12-03", "长期"))
+        self.assertEqual(it["B11"]["value"], "true")
+        self.assertIn("派生:B05-1,B05,A06", it["B11"]["source"])
+        self.assertEqual(it["B22"]["value"], "false")
+        self.assertIn("B05-1", it["B22"]["source"])
+        self.assertEqual(it["J34"]["value"], "无不一致")                 # 起始日、长期均与工商一致
+        self.force([["B05-1", "2026年11月20日", "营业执照 bizlicUrl p1 营业期限栏｜2024年12月03日 至 2026年11月20日"]])
+        it = self.items()
+        self.assertEqual((it["B11"]["value"], it["B22"]["value"]), ("true", "true"))   # 基准日 2026-11-05，15 天后到期
+        self.assertIn("营业期限结束", it["J34"]["value"])                  # 工商截止日未返回（长期）→ 不一致
+        self.force([["B05-1", "2026年10月01日", "营业执照 bizlicUrl p1 营业期限栏｜2024年12月03日 至 2026年10月01日"]])
+        self.assertEqual(self.items()["B11"]["value"], "false")
+
+    def test_b05_start_date_compared_with_business_start(self):
+        self.ready()
+        rc, out = self.force([["B05", "2024-12-09", "营业执照 bizlicUrl p1 营业期限栏｜2024年12月09日 至 长期"]])
+        self.assertIn("RECHECK_ITEM B05|营业期限开始", out)
+        self.assertNotIn("RECHECK_ITEM B05-1", out)
+        self.assertIn("营业期限开始", self.items()["J34"]["value"])
+
+    def test_b04_blank_does_not_block_b11_when_b05_present(self):
+        """成立日期空栏（B04=null R03）只让成立月数等缺口，不影响按营业期限判断执照有效。"""
+        self.ready()
+        self.force([["B04", None, "R03｜营业执照第1页「成立日期」标签可见，对应值区清楚且空白"]])
+        it = self.items()
+        self.assertIsNone(it["B04"]["value"])
+        self.assertEqual(it["B16"]["source"], "N｜R12｜缺 B04")
+        self.assertEqual(it["B11"]["value"], "true")
+        self.assertIn("营业期限开始", it["B11"]["source"])
+
+    def test_branch_and_partnership_checked_in_name_and_type(self):
+        self.ready()
+        self.force([["B01", "上海修匀软件开发有限责任公司奉贤分公司", self.B01_SRC + "上海修匀软件开发有限责任公司奉贤分公司"]])
+        it = self.items()
+        self.assertEqual(it["B18"]["value"], "true")
+        self.assertTrue(it["B18"]["source"].startswith("Y｜派生:B01｜"), it["B18"]["source"])
+        self.assertEqual(it["B19"]["value"], "false")
+        self.ready_again()
+        self.force([["B02", "有限合伙企业", "营业执照 bizlicUrl p1 类型栏｜类型 有限合伙企业"]])
+        it = self.items()
+        self.assertEqual((it["B18"]["value"], it["B19"]["value"]), ("false", "true"))
+        self.assertTrue(it["B19"]["source"].startswith("Y｜派生:B02｜"), it["B19"]["source"])
+        self.force([["B02", None, "R06｜类型栏被印章遮挡"]])
+        it = self.items()
+        self.assertTrue(it["B19"]["source"].startswith("N｜R12｜"), it["B19"]["source"])   # 无命中且依据不全 → 不填 false
 
     def test_v29_recheck_rejects_unneeded_or_bad_rows(self):
         self.ready()
@@ -912,7 +968,7 @@ class ScriptTests(unittest.TestCase):
         self.type_ws()
         spec = json.loads(read("map_spec.json"))
         spec["map"].update({"Employer.main_business_queryable": ["B08"], "Employer.peer_platform_merchant": ["A07"],
-                            "Employer.admission_submitted_at": ["A06"], "AdmissionDoc.business_license_expiry_date": ["B05"]})
+                            "Employer.admission_submitted_at": ["A06"], "AdmissionDoc.business_license_expiry_date": ["B05-1"]})
         rc, out = self.build(json.dumps(spec, ensure_ascii=False))
         self.assertEqual(rc, 0, out)
         self.assertIn("TYPE_DROPPED", out)
@@ -922,20 +978,20 @@ class ScriptTests(unittest.TestCase):
         self.assertIn("Employer.main_business_queryable｜规则只拿它和 true/false 比较", out)
         self.assertIn("validate: OK", out)                          # 丢弃的键进 unfilled，键数仍闭合
         self.assertEqual(inp["Employer"]["admission_submitted_at"], "20261105")    # 日期比较两侧统一 yyyyMMdd
-        self.assertIn("COMPARE_SUMMARY 12 项", out)
+        self.assertIn("COMPARE_SUMMARY 13 项", out)
 
     def test_v33_long_term_expiry_is_not_passed_as_a_date(self):
         self.ready()
         self.type_ws()
-        self.force([["B05", "2023年11月28日 至 长期", "营业执照 bizlicUrl p1 营业期限栏｜2023年11月28日 至 长期"]])
+        self.force([["B05-1", "长期", "营业执照 bizlicUrl p1 营业期限栏｜2023年11月28日 至 长期"]])
         spec = json.loads(read("map_spec.json"))
-        spec["map"].update({"Employer.admission_submitted_at": ["A06"], "AdmissionDoc.business_license_expiry_date": ["B05"]})
+        spec["map"].update({"Employer.admission_submitted_at": ["A06"], "AdmissionDoc.business_license_expiry_date": ["B05-1"]})
         rc, out = self.build(json.dumps(spec, ensure_ascii=False))
         self.assertEqual(rc, 0, out)
         self.assertNotIn("business_license_expiry_date", self.inp(out).get("AdmissionDoc", {}))
         self.assertIn("长期/无截止日", out)
-        self.force([["B05", "2023年11月28日 至 2043年11月27日", "营业执照 bizlicUrl p1 营业期限栏｜2023年11月28日 至 2043年11月27日"]])
-        self.recheck([["B05", "2023年11月28日 至 2043年11月27日", "营业执照 bizlicUrl p1 营业期限栏｜2023年11月28日 至 2043年11月27日"]])
+        self.force([["B05-1", "2043年11月27日", "营业执照 bizlicUrl p1 营业期限栏｜2023年11月28日 至 2043年11月27日"]])
+        self.recheck([["B05-1", "2043年11月27日", "营业执照 bizlicUrl p1 营业期限栏｜2023年11月28日 至 2043年11月27日"]])
         rc, out = self.build()
         self.assertEqual(self.inp(out)["AdmissionDoc"]["business_license_expiry_date"], "20431127")   # 到期日取截止日
 
@@ -1375,8 +1431,11 @@ class VerifyTests(unittest.TestCase):
         self.assertEqual(rc, 2, out)
         self.assertIn("VERIFY", out)
 
+    PASS_IDS = ("B01", "B02", "B04", "B05", "B05-1", "B18", "B19", "B27", "D01")
+    D01_OK = "逐字：上/海/修/匀/软/件/开/发/有/限/责/任/公/司；末字：司；字形：左侧敞开，无竖笔，只有横折钩"
+
     def test_pass_all_then_finish_passes(self):
-        rc, out = self.verify([[i, "pass", "栏位原文有值，符合不为空"] for i in ("B01", "B02", "B04", "B05")])
+        rc, out = self.verify([[i, "pass", self.D01_OK if i == "D01" else "栏位原文有值，符合要求"] for i in self.PASS_IDS])
         self.assertEqual(rc, 0, out)
         self.assertIn("PASS", out)
         rc, out = run(self.ws, "detail.py", "finish", "--rid", RID)
@@ -1386,7 +1445,7 @@ class VerifyTests(unittest.TestCase):
         self.assertIn("已校验过", out)
 
     def test_fail_reextracts_once_then_needs_reverify(self):
-        self.verify([[i, "pass", "栏位原文有值，符合不为空"] for i in ("B01", "B02", "B05")])
+        self.verify([[i, "pass", "栏位原文有值，符合要求"] for i in self.PASS_IDS if i not in ("B04", "D01")] + [["D01", "pass", self.D01_OK]])
         rc, out = self.verify([["B04", "fail", "取成了发证日期，不是成立日期栏", "2024-12-03", "营业执照 bizlicUrl p1 成立日期栏｜成立日期 2024年12月03日"]])
         self.assertEqual(rc, 0, out)
         self.assertIn("VERIFY_ITEM B04|", out)
@@ -1403,6 +1462,29 @@ class VerifyTests(unittest.TestCase):
         self.assertTrue(it["source"].startswith("N｜R06｜两次取值均不符合校验"), it["source"])
         self.assertIn("PASS", out)
 
+    def test_d01_pass_requires_glyph_check(self):
+        """开户名称常把「有限公同」读成「有限公司」：pass 理由须逐字、写末字和左侧竖笔；自相矛盾退回，fail 更正后保留原字。"""
+        for why, want in (("与执照一致，看过没问题", "逐字复核不合格：理由须写"),
+                          ("逐字：上/海/修/匀/软/件/开/发/有/限/责/任/公/司；末字：司；字形：末字结构清楚可辨", "左侧有没有竖笔"),
+                          ("逐字：上/海/修/匀/软/件/开/发/有/限/责/任/公/司；末字：司；字形：左侧有竖笔，冂框封闭", "那是「同」不是「司」"),
+                          ("逐字：上/海/修/匀/软/件/开/发/有/限/责/任/公/同；末字：同；字形：左侧有竖笔，冂框封闭", "「逐字」须把当前值")):
+            rc, out = self.verify([["D01", "pass", why]])
+            self.assertEqual(rc, 1, out)
+            self.assertIn(want, out)
+        right = "上海修匀软件开发有限责任公同"
+        rc, out = self.verify([["D01", "fail", "末字左侧有竖笔、冂框封闭，是「同」，首次误读成「司」", right, "开户许可证 bankPermitUrl p1 账户名称栏｜账户名称：" + right]])
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.items()["D01"]["value"], right)
+        self.assertIn("RECHECK_ITEM D01|", out)                         # 与工商不一致 → 先二次识别，工商值不覆盖原字
+        rc, out = run(self.ws, "detail.py", "recheck", "--rid", RID, stdin=json.dumps({"rows": [["D01", right, "开户许可证 bankPermitUrl p1 账户名称栏｜账户名称：" + right]]}, ensure_ascii=False))
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.items()["D01"]["value"], right)
+        self.assertIn("VERIFY_ITEM D01|", out)
+        self.assertIn("pass 理由格式", out)
+        rc, out = self.verify([["D01", "pass", "逐字：上/海/修/匀/软/件/开/发/有/限/责/任/公/同；末字：同；字形：左侧有竖笔，冂框封闭，内有一横一口"]])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("D01 通过", out)
+
     def test_empty_value_cannot_pass_non_empty_rule(self):
         run(self.ws, "detail.py", "fill", "--rid", RID, "--force", stdin=json.dumps({"rows": [["B02", None, "R03｜类型栏被印章遮挡"]]}, ensure_ascii=False))
         rc, out = self.verify([["B02", "pass", "看过了没问题"]])
@@ -1413,9 +1495,9 @@ class VerifyTests(unittest.TestCase):
         self.assertEqual(self.items()["B02"]["value"], "有限责任公司（自然人独资）")
 
     def test_changing_a_verified_value_reopens_verify(self):
-        self.verify([[i, "pass", "栏位原文有值，符合不为空"] for i in ("B01", "B02", "B04", "B05")])
-        rc, out = run(self.ws, "detail.py", "fill", "--rid", RID, "--force", stdin=json.dumps({"rows": [["B05", "长期", "营业执照 bizlicUrl p1 营业期限栏｜营业期限 长期"]]}, ensure_ascii=False))
-        self.assertIn("VERIFY_ITEM B05|", out)
+        self.verify([[i, "pass", self.D01_OK if i == "D01" else "栏位原文有值，符合要求"] for i in self.PASS_IDS])
+        rc, out = run(self.ws, "detail.py", "fill", "--rid", RID, "--force", stdin=json.dumps({"rows": [["B05-1", "永久", "营业执照 bizlicUrl p1 营业期限栏｜营业期限 永久"]]}, ensure_ascii=False))
+        self.assertIn("VERIFY_ITEM B05-1|", out)
         self.assertNotIn("VERIFY_ITEM B01|", out)
 
     def test_bad_catalog_verify_spec_fails_init(self):

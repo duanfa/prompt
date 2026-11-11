@@ -207,6 +207,35 @@ def comment_parts(r):
     return desc.rstrip("。"), extra
 
 
+def hit_keywords(r):
+    """只保留引擎 hit 返回的关键词，不从表达式中推测命中词。"""
+    raw = r.get("hit")
+    raw = [raw] if isinstance(raw, str) else raw
+    if not isinstance(raw, list):
+        return []
+    return list(dict.fromkeys(x.strip() for x in raw if isinstance(x, str) and x.strip()))
+
+
+def hit_sentence(r):
+    """命中关键词与 comment 描述拼成一句；适用阶段等元数据不进入客户摘要。"""
+    words = hit_keywords(r)
+    if not words:
+        return ""
+    desc, extra = comment_parts(r)
+    comment = "，".join([desc] + extra).strip("，。；; ")
+    return "命中关键词%s%s" % ("、".join("「%s」" % x for x in words), "，" + comment if comment else "")
+
+
+def with_hit_sentence(text, rules):
+    """同一句已由模型写出时不重复；否则补到该规则对应事项的开头。"""
+    missing = []
+    for r in rules:
+        sentence = hit_sentence(r)
+        if sentence and sentence not in text and sentence not in missing:
+            missing.append(sentence)
+    return "；".join(missing + [text]) if missing else text
+
+
 def ladder():
     return ct.CONFIG["riskLadder"]
 
@@ -296,6 +325,7 @@ def make_hits(path, rid=None):
                      "level": lad[x["lv"]]["level"] if x["lv"] is not None else None,
                      "atConclusionLevel": an["lv"] is not None and x["lv"] == an["lv"],
                      "reason": r.get("reason") or "", "comment": r.get("comment") or "",
+                     "hit": hit_keywords(r),
                      "stage": stage_of(r), "ruleSource": r.get("ruleSource") or "",
                      "expression": r.get("expression")})
     with open(path, "rb") as f:
@@ -352,6 +382,8 @@ def cmd_result(a):
     for h in doc["hits"]:
         print("%s|%s|%s|%s|%s" % (h["ruleId"], h["riskMeasure"] or "（空）", h["level"] or "未识别", h["ruleName"],
                                   comment_parts(h)[0][:60]))
+        if hit_keywords(h):
+            print("HIT_KEYWORDS %s｜%s" % (h["ruleId"], hit_sentence(h)))
     if not doc["hits"]:
         print("（无命中）")
     print("FUNNEL 顺序：" + " > ".join(fn["order"]))
@@ -825,6 +857,9 @@ def need_basis_ctx(doc):
 def print_need_basis(rid, doc):
     lv, L, release, at_level, other_lv = need_basis_ctx(doc)
     print("NEED_BASIS 结论级别：%s｜%s" % (L["level"], L["title"]))
+    for r in doc["hits"]:
+        if hit_keywords(r):
+            print("HIT_KEYWORDS %s｜%s；脚本会把这句补入 summary，不用重复写，不据关键词命中另行推断违法事实。" % (r["ruleId"], hit_sentence(r)))
     if release:
         print("通过：没有命中需拦截/转人工的规则。依据写 %d–%d 条（约 5 条）：围绕已提交的资料，列举哪些资料真实、合规（每条指明哪份资料、哪个栏位，只写提取明细里有原文证据的）；下一步由脚本固定，不用写。" % RELEASE_BASIS)
     else:
@@ -909,14 +944,15 @@ def why_plain(why):
 
 def fallback_basis(r):
     desc, _ = comment_parts(r)
-    return plain("%s%s" % (r.get("ruleName") or "审核要求", "：" + desc if desc else "未满足"))
+    return hit_sentence(r) or plain("%s%s" % (r.get("ruleName") or "审核要求", "：" + desc if desc else "未满足"))
 
 
 def fallback_next(r, other=False):
     desc, _ = comment_parts(r)
     head = "另请处理“%s”" % r.get("ruleName") if other else "关于“%s”" % r.get("ruleName")
     desc = desc or "请按审核要求处理"
-    return plain("%s：%s，请补充或更正相关资料后重新提交%s" % (head, desc, "" if "人工" in desc else "，我们将安排人工核验"))
+    text = plain("%s：%s，请补充或更正相关资料后重新提交%s" % (head, desc, "" if "人工" in desc else "，我们将安排人工核验"))
+    return with_hit_sentence(text, [r]) if other else text
 
 
 def check_analysis(items, hay, ids, rid=None):
@@ -966,6 +1002,8 @@ def cmd_summary(a):
     other_ids = {h["ruleId"] for h in other_lv}
     ids = doc["source"].get("allRuleIds") or [h["ruleId"] for h in hits]
     basis, nxt, analysis, lenient_log = [], [], [], []
+    hit_included = set()
+    byid = {h["ruleId"]: h for h in hits}
     rejected = load_tries(a.rid)
     lenient = rejected >= LENIENT_AFTER
 
@@ -1007,6 +1045,8 @@ def cmd_summary(a):
         hay, errs, seen, tried = evidence_text(a.rid), [], set(), set()
         if hay is None:
             print("WARN 没有找到 work/%s/input-extract-detail.json，「」引文无法核对提交资料原文（不影响其余校验）" % a.rid)
+        else:
+            hay += "\n" + "\n".join(w for h in hits for w in hit_keywords(h))
         for k, it in enumerate(draft["basis"], 1):
             if not isinstance(it, dict):
                 errs.append("basis[%d] 格式应为 {\"ruleIds\":[…],\"text\":\"…\"}" % k)
@@ -1025,7 +1065,10 @@ def cmd_summary(a):
                 tried.update(rids)
                 continue
             seen.update(rids)
-            basis.append(it["text"].strip().rstrip("。；"))
+            text = it["text"].strip().rstrip("。；")
+            hit_rules = [byid[i] for i in rids if i in byid and i not in hit_included]
+            basis.append(with_hit_sentence(text, hit_rules))
+            hit_included.update(r["ruleId"] for r in hit_rules if hit_keywords(r))
         if release:
             if not (RELEASE_BASIS[0] <= len(draft["basis"]) <= RELEASE_BASIS[1]):
                 errs.append("通过的依据应写 %d–%d 条（约 5 条），现在 %d 条" % (RELEASE_BASIS[0], RELEASE_BASIS[1], len(draft["basis"])))
@@ -1058,7 +1101,9 @@ def cmd_summary(a):
                         errs.append(e + ("（这条已带 %s，只改文字即可）" % ",".join(rids2) if rids2 else ""))
                         n_tried.update(rids2)
                     else:
-                        nxt.append(t.strip())
+                        hit_rules = [byid[i] for i in rids2 if i in other_ids and i not in hit_included]
+                        nxt.append(with_hit_sentence(t.strip(), hit_rules))
+                        hit_included.update(r["ruleId"] for r in hit_rules if hit_keywords(r))
                         n_seen.update(rids2)
                         if not any(i in other_ids for i in rids2):
                             n_plain += 1
@@ -1080,10 +1125,14 @@ def cmd_summary(a):
                 byid = {h["ruleId"]: h for h in hits}
                 for rid_ in sorted(allowed - seen):
                     basis.append(fallback_basis(byid[rid_]))
+                    if hit_keywords(byid[rid_]):
+                        hit_included.add(rid_)
                 if not nxt:
                     nxt = [fallback_next(h) for h in at_level][:MAX_NEXT]
                 for rid_ in sorted(other_ids - n_seen):
                     nxt.append(fallback_next(byid[rid_], other=True))
+                    if hit_keywords(byid[rid_]):
+                        hit_included.add(rid_)
                 nxt = nxt[:MAX_NEXT + len(other_lv)]
         if lenient_log:
             for e in lenient_log:
@@ -1103,6 +1152,12 @@ def cmd_summary(a):
 
     concl = "%s｜%s" % (L["level"], L["title"]) if L else "暂无结论｜%s" % why_plain(fn["why"])
     att = attention_lines(a.rid)
+    covered = "\n".join(basis + nxt + att)
+    for h in hits:
+        sentence = hit_sentence(h)
+        if sentence and sentence not in covered:
+            att.append(sentence + "。")
+            covered += "\n" + sentence
     picks = draft.get("notice") if lv is not None and isinstance(draft, dict) and "notice" in draft else None
     notices, n_dropped = pick_notices(a.rid, picks, basis + nxt)
     for e in n_dropped:
