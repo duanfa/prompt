@@ -1262,18 +1262,32 @@ def material_progress(rows):
     return out
 
 
+def next_batch(groups):
+    """v45（job_299-v11-9）：不用看图的组（视频回答、请求参数、工商）不再各占一轮，并进第一份要看图的材料一起交。
+    返回 (本批组名列表, 去哪里看, 是否要看图, 本批条目 ID)。"""
+    if not groups:
+        return [], "", False, []
+    reads = [x for x in groups if x[2]]
+    no_read = [x for x in groups if not x[2]]
+    batch = ([reads[0]] if reads else []) + no_read
+    return ([g for g, _, _, _ in batch], "；".join("%s 看 %s" % (g, w) for g, w, _, _ in batch),
+            bool(reads), [i for _, _, _, ids in batch for i in ids])
+
+
 def print_material_plan(pend):
     groups = material_progress(pend)
     if not groups:
-        return
+        return set()
     print("BY_MATERIAL 按材料逐份处理（读一份 → 立刻 fill 这一份 → 再读下一份；不要攒到最后一次提交）：" +
           "；".join("%s %d 行" % (g, len(ids)) for g, _, _, ids in groups))
-    g, where, needs_read, ids = groups[0]
-    print("NEXT_MATERIAL %s｜看：%s｜本次 fill 只交这一组：%s" % (g, where, "、".join(ids)) +
-          ("｜图片/PDF 本轮看完就提交；之后上下文里出现「…is offloaded…」表示已经看过，不是读取失败，不要为它重读" if needs_read else ""))
+    names, where, needs_read, ids = next_batch(groups)
+    print("NEXT_MATERIAL %s｜看：%s｜本次 fill 只交这一组：%s" % ("+".join(names), where, "、".join(ids)) +
+          ("｜图片/PDF 本轮看完就提交；之后上下文里出现「…is offloaded…」表示已经看过，不是读取失败，不要为它重读" if needs_read else "") +
+          "｜这一份材料若有 RECHECK_ITEM，可以放在同一次 fill 的 recheck 字段里一起交")
+    return set(ids)
 
 
-def report(rid, doc, st, header=False):
+def report(rid, doc, st, header=False, full=False):
     pend = pending_rows(doc)
     ys = sum(1 for x in doc["items"] if x["source"].startswith("Y｜"))
     ns = sum(1 for x in doc["items"] if x["source"].startswith("N｜"))
@@ -1296,10 +1310,15 @@ def report(rid, doc, st, header=False):
         print("NEED_REVIEW %d 行依据已填但脚本算不出（依据原文读不出所需日期/名称），请看依据原文后用 fill 提交（不要重交依据）：%s" % (
             len(stuck), "、".join("%s←%s" % (x["id"], ",".join("%s=%s" % (f, src_of[f]) for f in specs[x["id"]]["from"])) for x in stuck)))
     if pend:
-        print_material_plan(pend)
-        print("PENDING 待填 %d 行（id|name|desc）——读材料后用 fill 提交；取不到写 null + Rxx｜具体原因：" % len(pend))
-        for x in pend:
+        now = print_material_plan(pend) if not full else set()
+        cur = [x for x in pend if not now or x["id"] in now]
+        rest = [x for x in pend if now and x["id"] not in now]
+        print("PENDING 待填 %d 行（id|name|desc）——读材料后用 fill 提交；取不到写 null + Rxx｜具体原因%s：" % (
+            len(pend), "；下面只列本次这一份的 %d 行" % len(cur) if rest else ""))
+        for x in cur:
             print("%s|%s|%s" % (x["id"], x["name"], x["desc"]))
+        if rest:      # v45：其余材料的行只给 ID，轮到时再列 desc（job_299-v11-9 每次 fill 重印 87 行，10 次共 2.4 万字进上下文）
+            print("LATER 其余 %d 行轮到对应材料时再列 desc：%s" % (len(rest), "、".join(x["id"] for x in rest)))
     for g in gate_problems(doc, st):
         print(g)
     for ln in recheck_lines(doc, st):
@@ -1406,10 +1425,20 @@ def cmd_fill(a):
     for o, b, _, _ in PAIRS:                                                  # 原件或工商侧被改，之前的复核结论作废，需重新比对
         if o in done or b in done:
             st["rechecked"].pop(o, None)
+    rc_lines, rc_ignored = [], []
+    if spec.get("recheck"):          # v45：复核随材料一起交，不再单独跑一轮 recheck（job_299-v11-9 多了 3 轮）
+        rc_errs, rc_done, rc_lines, rc_ignored = apply_recheck(doc, st, spec["recheck"], ahead=True)
+        errs += ["recheck：" + e for e in rc_errs]
+        st["derived"] = [i for i in st.get("derived", []) if i not in rc_done]
+        done += [i for i in rc_done if i not in done]
     pend, miss_mat = finalize(a.rid, doc, st)
     mark_stale(doc, st, before, done)
     st["stale"] = [i for i in st["stale"] if i not in done]
     save_state(a.rid, st)
+    if rc_lines:
+        print("复核结果：" + "；".join(rc_lines))
+    if rc_ignored:
+        print("RECHECK_IGNORED 这些项与工商一致或任一侧没有值，不需要复核，已忽略（不算错）：" + "、".join(rc_ignored))
     if autofix:
         print("AUTOFIX 以下行漏了「｜」，已补上来源（开头能认出的来源，认不出就用该条所属的材料；下次直接写「来源｜证据」）：" + "、".join(autofix))
     if fallback:
@@ -1468,7 +1497,7 @@ def cmd_finish(a):
 def cmd_show(a):
     doc, st = load_detail(a.rid)
     if a.pending:
-        report(a.rid, doc, st)
+        report(a.rid, doc, st, full=True)
         return
     for x in doc["items"]:
         src = x["source"]
@@ -1497,20 +1526,14 @@ def cmd_compare(a):
     print("OK 没有待复核项")
 
 
-def cmd_recheck(a):
-    """工商与原件识别不一致时，回看原件二次识别后提交。每项只复核一次。
-    二次识别 = 首次 → 确认不一致：保留原件值，在 source 追加复核记录，冲突说明标「已二次识别确认」，不用工商值覆盖；
-    二次识别 ≠ 首次且 = 工商 → 首次识别有误：更正为二次识别值；
-    二次识别 ≠ 首次且 ≠ 工商 → 两次识别不一致：该项置 N R06，不取值；
-    二次识别仍无法确认（value=null）→ 该项置 N，不取值。"""
-    doc, st = load_detail(a.rid)
-    spec = read_stdin("recheck", a.rid)
+def apply_recheck(doc, st, rows, ahead=False):
+    """二次识别行的处理（recheck 子命令与 fill 的 recheck 字段共用）。返回 (errs, done, lines, ignored)。
+    ahead=True：fill 里随材料一起提前交的复核，不需要复核的项忽略、不算错。"""
     by = {x["id"]: x for x in doc["items"]}
     pairs = {p[0]: p for p in PAIRS}
     status = {p[0]: needs_recheck(p[3], p[4]) for p in pair_rows(doc)}
-    before = snapshot(doc)
-    errs, done, lines = [], [], []
-    for r in spec.get("rows") or []:
+    errs, done, lines, ignored = [], [], [], []
+    for r in rows or []:
         if not (isinstance(r, list) and len(r) == 3):
             errs.append("行格式应为 [原件条目ID, 二次识别值|null, text]: %s" % json.dumps(r, ensure_ascii=False)[:80])
             continue
@@ -1522,6 +1545,9 @@ def cmd_recheck(a):
             errs.append("%s 已经复核过一次，不再复核（每项只复核一次）" % oid)
             continue
         if not status[oid]:
+            if ahead:              # fill 里提前交的复核：这一项其实不需要复核，忽略即可，不算错
+                ignored.append(oid)
+                continue
             errs.append("%s 与工商一致或任一侧没有值，无需复核" % oid)
             continue
         verbatim = status[oid] == "verbatim"
@@ -1593,6 +1619,19 @@ def cmd_recheck(a):
             st["rechecked"][oid]["conflict"] = conflict
         done.append(oid)
         lines.append("%s %s：%s" % (oid, label, OUTCOME_LABEL[outcome]))
+    return errs, done, lines, ignored
+
+
+def cmd_recheck(a):
+    """工商与原件识别不一致时，回看原件二次识别后提交。每项只复核一次。
+    二次识别 = 首次 → 确认不一致：保留原件值，在 source 追加复核记录，冲突说明标「已二次识别确认」，不用工商值覆盖；
+    二次识别 ≠ 首次且 = 工商 → 首次识别有误：更正为二次识别值；
+    二次识别 ≠ 首次且 ≠ 工商 → 两次识别不一致：该项置 N R06，不取值；
+    二次识别仍无法确认（value=null）→ 该项置 N，不取值。"""
+    doc, st = load_detail(a.rid)
+    spec = read_stdin("recheck", a.rid)
+    before = snapshot(doc)
+    errs, done, lines, _ = apply_recheck(doc, st, spec.get("rows"))
     st["derived"] = [i for i in st.get("derived", []) if i not in done]
     pend, miss_mat = finalize(a.rid, doc, st)
     mark_stale(doc, st, before, done)

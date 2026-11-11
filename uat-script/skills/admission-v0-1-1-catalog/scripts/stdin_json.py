@@ -22,7 +22,7 @@ FAIL_FILE = ".stdin-failures.json"
 
 # 各步骤 stdin 的顶层契约键（None = 不检查顶层键）
 TOP_KEYS = {
-    "fill": {"materials", "rows", "notes"},
+    "fill": {"materials", "rows", "notes", "recheck"},
     "recheck": {"rows"},
     "verify": {"rows"},
     "build": {"map", "skip", "set", "fixedUnmapped", "toolIssues", "rules"},

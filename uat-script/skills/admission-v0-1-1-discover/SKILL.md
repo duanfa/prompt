@@ -34,7 +34,7 @@ metadata:
 | hrInstId 机构 ID | A04 | `LaborAgency.agency_id` 与 `Agency.agency_id`（同值） |
 | projCont 项目内容及交付要求 | A08 等 | `Employer.usage_scenario`（有枚举时 map/set 单选；无枚举才取 A08 原文） |
 
-- 四个 ID 不可互换；脚本不允许把预设键改映到别的条目，也不允许 skip；审核单 ID 不用企业 ID 代替；请求没有值不编造。
+- 四个 ID 不可互换；不要把预设键改映到别的条目或 skip——提交了脚本也只会忽略并打印 `PRESET_OVERRIDE_IGNORED`，照样按预设条目取值，不用再改；审核单 ID 不用企业 ID 代替；请求没有值不编造。
 - 用工场景：有枚举定义时提交 map/set，确实证据不足才按具体原因 skip；未给值时 build 打印 NEED_VALUE 提醒（该键按 R10 记入 unfilled、不进 input），能补就在同一次 build 用 set 补；不拦门禁，打印 `GATE: READY` 就直接调用 mcp_run_process，不为它反复重跑 build。没有枚举定义时自动取 projCont 原文，模型的改映/skip/set 仍只提示 PRESET_OVERRIDE_IGNORED 并忽略。
 - 预设之外，定义里若还有含义**确实相同**的别的属性，可以再用 `map` 映射到同一个条目，同值同传；一般不用。`combine.py plan` 的“标识候选”只是提示。
 - `build` 打印 `PRESET_UNDEFINED` = 某预设键本次定义里没有（仍照传）；预设键请求没值就不传，只记 notes.toolIssues，不用处理。打印 `FALLBACK_FILLED` = 某规则引用的枚举键没取到值、已按配置兜底传入（只记 notes.toolIssues，不用处理，不写进摘要依据）。预设键名跟不上本体改名时，只改配置，不改提示词或代码。

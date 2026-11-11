@@ -1594,10 +1594,48 @@ def enum_presets(props):
             if o["name"] + "." + p["name"] in ct.DEFINITION_PRESETS and enum_options(p)[0]}
 
 
+INPUTS_FILE = "inputs.json"
+
+
+def remember_inputs(a):
+    """v45：plan 记下本次用的规则/属性文件，build/validate 不用模型再抄一遍长路径（job_299-v11-9 抄错一位数，build 报文件不存在）。"""
+    d = os.path.join("work", a.rid)
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, INPUTS_FILE), "w", encoding="utf-8") as f:
+        json.dump({"rules": a.rules, "props": a.props}, f, ensure_ascii=False)
+
+
+def resolve_inputs(a, need_props=True):
+    """--rules/--props 省略或给的路径不存在时，用 plan 记下的；都没有才报错。"""
+    fp = os.path.join("work", a.rid, INPUTS_FILE)
+    saved = ct.load(fp) if os.path.isfile(fp) else {}
+    rules = getattr(a, "rules", None) or []
+    if not rules or not all(os.path.isfile(x) for x in rules):
+        if saved.get("rules"):
+            if rules:
+                print("WARN PATH_FIXED --rules 里有不存在的文件（%s），已改用 plan 时的 %s" % (
+                    "、".join(x for x in rules if not os.path.isfile(x)), " ".join(saved["rules"])))
+            rules = saved["rules"]
+        elif not rules:
+            die("缺 --rules，且没有 work/%s/%s（先运行 combine.py plan）" % (a.rid, INPUTS_FILE), 2)
+    a.rules = rules
+    if need_props:
+        props = getattr(a, "props", None)
+        if not props or not os.path.isfile(props):
+            if saved.get("props"):
+                if props:
+                    print("WARN PATH_FIXED --props 文件不存在（%s），已改用 plan 时的 %s" % (props, saved["props"]))
+                props = saved["props"]
+            elif not props:
+                die("缺 --props，且没有 work/%s/%s（先运行 combine.py plan）" % (a.rid, INPUTS_FILE), 2)
+        a.props = props
+
+
 def cmd_plan(a):
     """只读：列出本次规则引用的属性（含定义的 label/comment）和清单条目，供你按语义决定「哪个条目 → 哪个属性」。
     映射不是对照表：属性名随本体随时会变，只看本次定义返回的 label/comment 与条目 name/desc 的含义。"""
     rules, props = rules_list(a.rules), props_list(a.props)
+    remember_inputs(a)
     classified_presets = enum_presets(props)
     rules, _ = rule_scope(rules, load_map(a.rid))
     defs = {o["name"]: o for o in props}
@@ -1721,10 +1759,17 @@ def build(rid, rules, props, sets, spec_in):
                 print("PRESET_OVERRIDE_IGNORED %s 是预设键，固定取 %s 原文，忽略你提交的 %s；以后不用提交它" % (k, item, "/".join(touched)))
             entries[k] = ([item], True)
             continue
+        # v45（job_299-v11-9）：把预设键改映到 B01 曾让 build 退出、多跑一轮；改为忽略并提示，仍固定取请求原文
         if k in skipmap:
-            die("%s 是预设的标识键（%s → %s），不能 skip" % (k, item, k))
+            skipmap.pop(k)
+            for c in mp["skip"]:
+                mp["skip"][c] = [x for x in mp["skip"][c] if x != k]
+            print("PRESET_OVERRIDE_IGNORED %s 是预设的标识键，固定取 %s，忽略你提交的 skip；以后不用提交它" % (k, item))
         if k in entries and entries[k][0] != [item]:
-            die("%s 是预设的标识键，只能对应 %s，不能改映到 %s：企业 ID、需求 ID、机构 ID 不可互换" % (k, item, "、".join(entries[k][0])))
+            print("PRESET_OVERRIDE_IGNORED %s 是预设的标识键，固定取 %s，忽略你提交的映射 %s（企业 ID、需求 ID、机构 ID 不可互换）；以后不用提交它"
+                  % (k, item, "、".join(entries[k][0])))
+            mp["map"].pop(k, None)               # 不落盘，免得以后每次 build 都再提示
+        sets.pop(k, None)
         entries[k] = ([item], True)
     sets = sync_sets(mp, sets, spec_in, entries, skipmap, rows, classified_presets)
     with open(map_path(rid), "w", encoding="utf-8") as f:     # 全部校验通过后才落盘：被拒的提交不能留在 key-map.json 里毒化以后的 build
@@ -1914,6 +1959,7 @@ def run_validate(rid, rules_path):
 
 
 def cmd_build(a):
+    resolve_inputs(a)
     rules, props = rules_list(a.rules), props_list(a.props)
     sets, raw = {}, ""
     if not sys.stdin.isatty():
@@ -2037,6 +2083,7 @@ def compare_summary(rid):
 
 
 def cmd_validate(a):
+    resolve_inputs(a, need_props=False)
     rc, lines = run_validate(a.rid, a.rules)
     print("\n".join(lines))
     sys.exit(rc)
@@ -2088,8 +2135,8 @@ def main():
     n.add_argument("--rules", required=True, nargs="+")
     b = sp.add_parser("build")
     b.add_argument("--rid", required=True)
-    b.add_argument("--rules", required=True, nargs="+")
-    b.add_argument("--props", required=True)
+    b.add_argument("--rules", nargs="+")       # v45：可省略，沿用 plan 时的文件
+    b.add_argument("--props")
     pl = sp.add_parser("plan")
     pl.add_argument("--rid", required=True)
     pl.add_argument("--rules", required=True, nargs="+")
@@ -2108,7 +2155,7 @@ def main():
     sm.add_argument("--file")
     v = sp.add_parser("validate")
     v.add_argument("--rid", required=True)
-    v.add_argument("--rules", required=True, nargs="+")
+    v.add_argument("--rules", nargs="+")
     a = ap.parse_args(repair_argv(sys.argv[1:], "combine.py", USAGE))
     for k in ("biz", "rules"):  # 多文件参数：逗号拼接也拆开（路径不含逗号）
         if isinstance(getattr(a, k, None), list):

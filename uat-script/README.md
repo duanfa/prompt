@@ -1,4 +1,19 @@
-## 当前修订：命中规则带 hit 关键词时，关键词与 comment 拼成一句进 summary（2026-11-11，版本仍为 0.1.1）
+## 当前修订：再砍模型轮数与上下文（job_299-v11-9，12.2 分钟，2026-11-11，版本仍为 0.1.1）
+
+- **依据**：v11-9 已无读图循环（Read 37 → 4），但 build 白跑 2 次约 2 分钟（模型重抄规则文件路径抄错一位；把预设键 `Employer.enterprise_name` 改映到 B01 被退出），每次 fill 重印 87 行待填（10 次共 2.4 万字，单轮输入涨到 10.4 万 token、触发 1 次压缩），每份材料后单独一轮 recheck（3 轮），视频/请求参数/工商各占一轮（3 轮）。
+- **`combine.py`**：plan 把规则/属性文件路径记到 `work/<id>/inputs.json`；build/validate 的 `--rules/--props` 可省略，给的路径不存在时沿用 plan 的并打印 `WARN PATH_FIXED`。预设标识键被改映或 skip 时不再退出，打印 `PRESET_OVERRIDE_IGNORED`、按预设条目取值、不落盘到 key-map。
+- **`detail.py`**：`NEXT_MATERIAL` 第一批把不用看图的组（视频回答、请求参数、工商）并进第一份材料；`PENDING` 只列本批的 desc，其余在 `LATER` 行只给 ID（`show --pending` 仍给全量）；fill 接受可选 `recheck` 字段（与 recheck 子命令同一套处理，不需要复核的项打印 `RECHECK_IGNORED`、不算错）。`stdin_json.py` 允许 fill 的 `recheck` 键。
+- **提示词**：主提示词红线 14、第二节第 3/3b/4 轮；discover（预设键被忽略）、materials（复核随下一次 fill 交）同步。
+- 测试：新增 `integration/test_fewer_rounds.py`（5 项，旧脚本上 5 项全失败）；`test_scripts.py` 预设键用例改为断言“忽略并提示”，三处“列给模型”断言接受 `LATER`。**估计可再省约 3–4 分钟（按 v11-9 时间线推算，未重跑）**；豆包单轮长推理（plan 后一轮 106 秒）需平台调推理参数，未处理。Archive.zip、manifest 未更新。
+
+## 当前修订：成立日期空栏保留缺失、开户名称按字形复核、格式恢复不改事实（2026-11-11，版本仍为 0.1.1）
+
+- **证据**：346-d1 首次正确记 B04=null，但 JSON 报错后重交变成营业期限起始日；329-d1 已执行逐字复核，仍把原件“有限公同”拆写为“有限公司”。已从本次请求 URL 读取并目视核对两处原文；证据摘要、traceId、附件 SHA 与验证边界见 [定向修改说明](references/成立日期空栏与开户名称错字_d1修订.md)。
+- **提示词**：主提示词、materials、catalog 清单 B04/B23/D01 和 catalog/output skill 同步；B04 verify 从“不为空”改为核对本栏及允许确认缺失；名称要求末字及实际笔画依据；拆批保持原行 ID/value/text；摘要提醒成立日期缺失。**Python 脚本未改**，字形依据是提示要求，脚本不能验证图像观察的真实性。
+- **验证**：JSON 恢复 10 项、逐字复核 3 项通过；定向调用确认 B04 null/R03 可完成来源校验、B16 保留缺口、notice 可输出缺失提醒。VerifyTests 的 2 项既有失败用修改前清单复现，未改测试。
+- **交付**：主提示词、catalog `Archive.zip`、materials/output `SKILL.md.zip` 同步更新，压缩包与源码逐文件核对；manifest 按当前源码重算。**未部署、未重跑远端任务；需用两份原件回归后确认识别效果。**
+
+## 历史修订：命中规则带 hit 关键词时，关键词与 comment 拼成一句进 summary（2026-11-11，版本仍为 0.1.1）
 
 - **需求**：引擎对关键词类规则（如机构规则 `Project.project_name CONTAINS [使用的应用]`）的命中项返回 `"hit": ["使用的应用"]`，summary 要写明命中了哪个关键词。
 - **`combine.py`**：`result` 把 `hit` 保留进 `hit-rules.json`（字符串也接受，去空去重）；`summary` 渲染时在引用该规则的依据/下一步开头放「命中关键词「使用的应用」，触发风控行业限制，不予准入」（comment 去掉「｜适用阶段…」），模型文字里已有这句不重复；宽松补齐时也用这句。关键词允许出现在模型的「」引文里。NEED_BASIS 打印 `HIT_KEYWORDS`，告诉模型不用复述。没有 `hit` 的规则不变。

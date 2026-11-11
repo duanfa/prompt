@@ -68,6 +68,14 @@ def auto_verify(ws, runner=None):
 AUTO_FILL_WHY = "R03｜回归夹具未覆盖此条目（测试自动补齐）"
 
 
+def listed_for_model(out, i):
+    """v45：PENDING 只列本次这一份材料的 desc，其余待填行在 LATER 行只给 ID；两种都算“交给模型填”。"""
+    if "\n%s|" % i in out:
+        return True
+    later = next((ln for ln in out.splitlines() if ln.startswith("LATER ")), "")
+    return i in later.split("：", 1)[-1].split("、")
+
+
 def fill_fixture(ws, runner=None):
     """按 v25 那次模型的填写记录 fill；清单后来新增、夹具里没有答案的行，再用 null + R03 补一轮。
     这样清单加条目不会让与它无关的用例失败（夹具只记录那次真实运行，不随清单逐条补）。
@@ -420,7 +428,7 @@ class ScriptTests(unittest.TestCase):
         self.assertIn("WAIT", init_out)
         self.assertIn("G90←G02,A02", init_out)
         self.assertNotIn("\nG90|", init_out)                        # 派生行不让模型读
-        self.assertIn("\nG91|", init_out)                           # 普通新条目照常列给模型
+        self.assertTrue(listed_for_model(init_out, "G91"), init_out)   # 普通新条目照常列给模型
         self.assertIn("PASS", out)
         self.assertTrue(it["G90"]["source"].startswith("Y｜派生:G02,A02｜"), it["G90"])
         self.assertEqual(it["G91"]["source"], "N｜" + AUTO_FILL_WHY)
@@ -852,22 +860,31 @@ class ScriptTests(unittest.TestCase):
         self.assertIn("validate: OK", out)
 
     def test_v30_preset_identifiers_cannot_be_swapped_or_skipped(self):
-        """四个 ID 不可互换。"""
+        """四个 ID 不可互换。v45（job_299-v11-9）：改映/skip 不再让 build 退出（多跑一轮），改为忽略并打印 PRESET_OVERRIDE_IGNORED，
+        仍按预设条目取值。"""
         self.ready()
-        rc, out = self.build(json.dumps({"map": {"Employer.employer_id": ["A03"]}}))
-        self.assertNotEqual(rc, 0)
-        self.assertIn("预设的标识键，只能对应 A01，不能改映到 A03", out)
-        self.assertFalse(os.path.exists(os.path.join(self.ws, "work", RID, "key-map.json")))      # 被拒的提交不落盘，不毒化以后的 build
-        rc, out = self.build(json.dumps({"map": {"Demand.demand_id": ["A04"]}}))
-        self.assertNotEqual(rc, 0)
-        self.assertIn("不可互换", out)
-        rc, out = self.build(json.dumps({"skip": {"R10": ["Demand.demand_id"]}}))
-        self.assertNotEqual(rc, 0)
-        self.assertIn("不能 skip", out)
-        rc, out = self.build(read("map_spec.json"))                                              # 前面三次都被拒，现在正常提交仍然成功
-        self.assertEqual(rc, 0, out)
+        spec = json.loads(read("map_spec.json"))
+
+        def input_of(out):
+            return json.loads(next(ln[6:] for ln in out.splitlines() if ln.startswith("INPUT ")))
+
+        for extra, word in (({"map": {"Employer.employer_id": ["A03"]}}, "忽略你提交的映射 A03"),
+                            ({"map": {"Demand.demand_id": ["A04"]}}, "不可互换"),
+                            ({"skip": {"R10": ["Demand.demand_id"]}}, "忽略你提交的 skip")):
+            sp = json.loads(json.dumps(spec))
+            for k, v in extra.items():
+                sp.setdefault(k, {}).update(v)
+            rc, out = self.build(json.dumps(sp, ensure_ascii=False))
+            self.assertEqual(rc, 0, out)
+            self.assertIn("PRESET_OVERRIDE_IGNORED", out)
+            self.assertIn(word, out)
+            inp = input_of(out)
+            self.assertNotEqual(inp["Employer"]["employer_id"], inp.get("Demand", {}).get("demand_id"))
+        km = json.load(open(os.path.join(self.ws, "work", RID, "key-map.json"), encoding="utf-8"))
+        self.assertNotEqual(km["map"].get("Employer.employer_id"), ["A03"])
         rc, out = self.build(json.dumps({"map": {"Employer.employer_id": ["A01"]}}))             # 映成同一个条目：无害
         self.assertEqual(rc, 0, out)
+        self.assertNotIn("PRESET_OVERRIDE_IGNORED Employer.employer_id", out)
 
     def test_v30_preset_follows_the_config_not_the_code(self):
         """本体把企业名称改回 employer_name：只改 run_process_required.json，不改代码。"""
@@ -1328,7 +1345,7 @@ class V42FixTests(unittest.TestCase):
         rc, out = run(self.st.ws, "detail.py", "init", "--biz", "biz_D.txt", "biz_B.txt", "biz_T.txt", "--rules", "rules.json",
                       stdin=json.dumps(spec, ensure_ascii=False))
         self.assertEqual(rc, 0, out)
-        self.assertIn("\nH1-15|", out)                             # uat 清单没有 H1-14 名称原文条目：是否一致交给模型按协议读
+        self.assertTrue(listed_for_model(out, "H1-15"), out)                             # uat 清单没有 H1-14 名称原文条目：是否一致交给模型按协议读
         self.assertNotIn("H1-15←", out)
         rc, out = run(self.st.ws, "detail.py", "fill", "--rid", RID, stdin=json.dumps(
             {"rows": [["H1-15", "true", "上下游合同 upstreamDnstreamAgmtUrl p1 甲方栏｜甲方：上海修匀软件开发有限责任公司"]]}, ensure_ascii=False))
@@ -1339,7 +1356,7 @@ class V42FixTests(unittest.TestCase):
     def test_lease_seal_split_rows_are_listed_for_model(self):
         init_out, _, _ = self.st._flow_with_catalog(lambda items: None)
         for i in ("G09", "G11"):                                   # uat 清单：双方盖章 G09、承租方章名 G11 由模型读
-            self.assertIn("\n%s|" % i, init_out)
+            self.assertTrue(listed_for_model(init_out, i), init_out)
 
     def test_tax_group_not_absent_when_only_vat_field_has_file(self):
         spec = json.loads(read("init_spec.json"))
