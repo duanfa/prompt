@@ -1,0 +1,284 @@
+{
+  "dws_lgw_risk_customer_warn_sum": {
+    "customer_id": {
+      "type": "STRING",
+      "comment": "客户ID"
+    },
+    "customer_name": {
+      "type": "STRING",
+      "comment": "客户名称"
+    },
+    "currency": {
+      "type": "STRING",
+      "comment": "币种，如 CNY"
+    },
+    "rule_version": {
+      "type": "STRING",
+      "comment": "规则版本，如 V1.0（快照留痕）"
+    },
+    "obs_start_month": {
+      "type": "STRING",
+      "comment": "观察期起始月 yyyy-MM（R03取最近3个完整自然月）"
+    },
+    "obs_end_month": {
+      "type": "STRING",
+      "comment": "观察期截止月 yyyy-MM"
+    },
+    "total_worker_cnt": {
+      "type": "BIGINT",
+      "comment": "发放人数U：观察期内有有效发放的去重人数"
+    },
+    "regular_worker_cnt": {
+      "type": "BIGINT",
+      "comment": "规律人数H：命中R01去重人数（含R02人员）"
+    },
+    "r02_worker_cnt": {
+      "type": "BIGINT",
+      "comment": "R02人数（重点人数）"
+    },
+    "hit_worker_ratio": {
+      "type": "DECIMAL(10,6)",
+      "comment": "命中占比H/U，0~1"
+    },
+    "involved_amount": {
+      "type": "DECIMAL(18,2)",
+      "comment": "涉及金额：观察期内该客户有效流水累计（元）"
+    },
+    "worker_cnt_threshold": {
+      "type": "BIGINT",
+      "comment": "人数阈值，默认10（参数快照，启用前回测确认）"
+    },
+    "ratio_threshold": {
+      "type": "DECIMAL(10,6)",
+      "comment": "占比阈值，默认0.30（参数快照）"
+    },
+    "is_customer_warn": {
+      "type": "STRING",
+      "comment": "是否命中R03客户预警：H≥阈值 且 H/U≥占比阈值"
+    },
+    "priority": {
+      "type": "STRING",
+      "comment": "核查优先级：重点/普通"
+    },
+    "warn_status": {
+      "type": "STRING",
+      "comment": "预警状态：待核查/核查中/已关闭"
+    },
+    "handler": {
+      "type": "STRING",
+      "comment": "核查负责人"
+    },
+    "check_conclusion": {
+      "type": "STRING",
+      "comment": "核查结论：存在风险/合理业务场景/证据不足"
+    },
+    "check_basis": {
+      "type": "STRING",
+      "comment": "核查依据（关闭必填）"
+    },
+    "close_time": {
+      "type": "DATETIME",
+      "comment": "关闭时间"
+    },
+    "etl_time": {
+      "type": "DATETIME",
+      "comment": "更新时间"
+    },
+    "ds": {
+      "type": "STRING",
+      "comment": "评估日期yyyyMMdd"
+    }
+  },
+  "dws_lgw_risk_worker_warn_detail": {
+    "warn_id": {
+      "type": "STRING",
+      "comment": "预警ID，全局唯一（对应客户+灵工+币种+风险类别）"
+    },
+    "customer_id": {
+      "type": "STRING",
+      "comment": "客户ID（同一灵工跨客户分别识别）"
+    },
+    "customer_name": {
+      "type": "STRING",
+      "comment": "客户名称"
+    },
+    "worker_id": {
+      "type": "STRING",
+      "comment": "统一灵工ID（同客户不同项目合并统计）"
+    },
+    "worker_name_masked": {
+      "type": "STRING",
+      "comment": "脱敏姓名"
+    },
+    "currency": {
+      "type": "STRING",
+      "comment": "币种"
+    },
+    "main_rule": {
+      "type": "STRING",
+      "comment": "主要规则：R01/R02（同时命中取R02）"
+    },
+    "priority": {
+      "type": "STRING",
+      "comment": "优先级：普通（R01）/重点（R02）"
+    },
+    "rule_version": {
+      "type": "STRING",
+      "comment": "规则版本（快照留痕）"
+    },
+    "obs_start_month": {
+      "type": "STRING",
+      "comment": "观察期起始月 yyyy-MM（R01取3月、R02取6月）"
+    },
+    "obs_end_month": {
+      "type": "STRING",
+      "comment": "观察期截止月 yyyy-MM"
+    },
+    "cover_month_cnt": {
+      "type": "BIGINT",
+      "comment": "覆盖月数：连续满足条件的完整自然月数（3/6）"
+    },
+    "month_amount_min": {
+      "type": "DECIMAL(18,2)",
+      "comment": "观察期内最低月有效发放金额（元）"
+    },
+    "month_amount_max": {
+      "type": "DECIMAL(18,2)",
+      "comment": "观察期内最高月有效发放金额（元）"
+    },
+    "volatility": {
+      "type": "DECIMAL(10,6)",
+      "comment": "金额波动率=(最高-最低)/最低，命中要求≤容差"
+    },
+    "amount_tolerance": {
+      "type": "DECIMAL(10,6)",
+      "comment": "金额容差，默认0.05（参数快照）"
+    },
+    "total_amount_3m": {
+      "type": "DECIMAL(18,2)",
+      "comment": "近3月累计应发金额（元）"
+    },
+    "anchor_day": {
+      "type": "BIGINT",
+      "comment": "固定发放日（系统识别）d=1~31，无该日取当月末日"
+    },
+    "window_days": {
+      "type": "BIGINT",
+      "comment": "日期窗口：锚定日±3日并截断至当月（参数快照）"
+    },
+    "min_window_ratio": {
+      "type": "DECIMAL(10,6)",
+      "comment": "各月窗口占比最小值，命中要求≥80%"
+    },
+    "first_hit_time": {
+      "type": "DATETIME",
+      "comment": "首次命中时间（首次命中提醒）"
+    },
+    "last_hit_time": {
+      "type": "DATETIME",
+      "comment": "最近命中时间（持续命中仅更新）"
+    },
+    "is_upgraded": {
+      "type": "STRING",
+      "comment": "是否普通升级重点（升级追加提醒）"
+    },
+    "warn_status": {
+      "type": "STRING",
+      "comment": "核查状态：待核查/核查中/已关闭"
+    },
+    "handler": {
+      "type": "STRING",
+      "comment": "核查负责人"
+    },
+    "check_conclusion": {
+      "type": "STRING",
+      "comment": "核查结论：存在风险/合理业务场景/证据不足"
+    },
+    "check_basis": {
+      "type": "STRING",
+      "comment": "核查依据（关闭必填）"
+    },
+    "close_time": {
+      "type": "DATETIME",
+      "comment": "关闭时间"
+    },
+    "etl_time": {
+      "type": "DATETIME",
+      "comment": "更新时间"
+    },
+    "ds": {
+      "type": "STRING",
+      "comment": "评估日期yyyyMMdd"
+    }
+  },
+  "dwd_lgw_risk_worker_warn_month_evidence": {
+    "warn_id": {
+      "type": "STRING",
+      "comment": "关联预警ID"
+    },
+    "rule_version": {
+      "type": "STRING",
+      "comment": "规则版本"
+    },
+    "customer_id": {
+      "type": "STRING",
+      "comment": "客户ID"
+    },
+    "worker_id": {
+      "type": "STRING",
+      "comment": "统一灵工ID"
+    },
+    "currency": {
+      "type": "STRING",
+      "comment": "币种"
+    },
+    "obs_month": {
+      "type": "STRING",
+      "comment": "月份 yyyy-MM（观察期内逐月）"
+    },
+    "obs_month_seq": {
+      "type": "BIGINT",
+      "comment": "观察期内月序"
+    },
+    "has_pay_flag": {
+      "type": "STRING",
+      "comment": "当月是否有有效发放：1/0（无发放月中断连续性，判不命中）"
+    },
+    "month_amount": {
+      "type": "DECIMAL(18,2)",
+      "comment": "当月有效发放金额A(m)：成功流水同月分笔合并、按业务流水ID去重（元）"
+    },
+    "pay_cnt": {
+      "type": "BIGINT",
+      "comment": "当月发放笔数"
+    },
+    "anchor_day": {
+      "type": "BIGINT",
+      "comment": "当月锚定日d（1~31，无该日取当月末日）"
+    },
+    "window_start": {
+      "type": "BIGINT",
+      "comment": "窗口起始日：d-3，截断至当月"
+    },
+    "window_end": {
+      "type": "BIGINT",
+      "comment": "窗口截止日：d+3，截断至当月"
+    },
+    "window_amount": {
+      "type": "DECIMAL(18,2)",
+      "comment": "窗口内有效发放金额（元）"
+    },
+    "window_ratio": {
+      "type": "DECIMAL(10,6)",
+      "comment": "窗口占比=窗口内金额/当月金额"
+    },
+    "etl_time": {
+      "type": "DATETIME",
+      "comment": "更新时间"
+    },
+    "ds": {
+      "type": "STRING",
+      "comment": "评估日期yyyyMMdd"
+    }
+  }
+}
