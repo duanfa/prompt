@@ -1,0 +1,33 @@
+{
+  "version": "labor-compliance-excel-v1-3-0",
+  "output": "/Users/duanfa/wanlianyida/prompt/laborCompliance/outputs/template-20261117/labor-compliance-20261105.xlsx",
+  "output_relative": "prompt/laborCompliance/outputs/template-20261117/labor-compliance-20261105.xlsx",
+  "output_bytes": 35856,
+  "output_sha256": "4555359225c12e53a7100f3798f84c9df7869e13adf8c3ac3b3f44f46e57d523",
+  "formula_error_count": 0,
+  "mock": true,
+  "data_issues": [],
+  "customers": 3,
+  "workers": 23,
+  "evidence": 90,
+  "ds": "20261105",
+  "rule_version": "V1.0",
+  "customer_warn_count": 1,
+  "r02_worker_warn_count": 7,
+  "amounts_by_currency": {
+    "CNY": {
+      "customer_involved_amount": "1278600.00",
+      "warned_worker_amount_3m": "474600.00"
+    }
+  },
+  "source": {
+    "path": "/tmp/labor-template-20261117/input.json",
+    "bytes": 55190,
+    "sha256": "e886ae082c11940f1e19f6af2e6ef83c4abb959ba418320088f589187e4b52f6",
+    "integrity_verified": true,
+    "size_verified": true
+  },
+  "checks_file": "/Users/duanfa/wanlianyida/prompt/laborCompliance/outputs/template-20261117/labor-compliance-20261105.checks.json",
+  "elapsed_seconds": 7.228,
+  "preview_generated": true
+}

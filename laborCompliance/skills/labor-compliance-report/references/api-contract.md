@@ -27,14 +27,20 @@
 
 ### 将 MCP 返回交给脚本
 
-保存完整 `tools/call` 返回为工作区 JSON 文件，然后使用 `--mcp-result work/mcp-result.json`。脚本接受以下两层形态：
+WanScope 当前对该工具配置 `mode=file`，平台在模型上下文截断之前保存原始文本，返回文件清单：
+
+```json
+{"mode":"file","saved":true,"complete":true,"path":"tool-results/<session_id>/get-labor-compliance-results_<随机标识>.json","encoding":"text","bytes":12345,"sha256":"<64位原文件哈希>","tool_state":"success"}
+```
+
+示例中的字节数、标识及哈希只是格式说明。必须采用本次实际清单；确认 `saved/complete` 为 true、状态 success、encoding 为 text。原文件是三张表的 JSON，直接将清单 path 传给 `--input`，并传实际 `--expected-sha256` 和 `--expected-bytes`。脚本按原始 UTF-8 字节校验，不修改文件；哈希校验是传递完整性校验，不代表上游业务真实性。不能用 Write 抄写、只保存清单或把清单本身当三表，不 Read 整份数据后转抄，不重复请求 MCP。
+
+用户已经提供的三表文件直接 `--input`；已有包装文件继续支持 `--mcp-result`：
 
 - `CallToolResult`：`{"content": [...], "structuredContent": {三张表}, "isError": false}`。
 - JSON-RPC 响应：`{"jsonrpc": "2.0", "id": 1, "result": {上述 CallToolResult}}`。
 
-处理顺序：遇到 JSON-RPC `error` 或 `isError=true` 立即失败；成功时优先取 `structuredContent`，仅在其不存在时解析 `content` 中一份完整三表 JSON 文本。不合并两份相同结果，不解析展示摘要或截断内容。结构异常仍由三表校验拒绝，不能从错误结果凑出空表。
-
-若平台直接提供原三表对象，保存后使用 `--input work/results.json`。已有用户快照直接复用，不为出报告重复调用 MCP。保存时保持全部字段、行和定点字符串，不让模型手工抄写或重新计算。
+包装处理先拒绝 JSON-RPC error 或 isError=true，再优先读取 structuredContent，仅在缺失时解析 content 中唯一完整三表文本。不合并重复结果，不接受摘要、预览、截断内容。平台保存失败时停止当前生成并说明，不重新调用只为保存结果，也不让模型转抄大段数据。
 
 **当前 MCP 必须加 `--mock-data`**。HTTP 的 `X-Mock-Data` 响应头不会自动随三张表传入 MCP；脚本不通过客户名称或 ID 猜测数据性质。若日后切换真实数据，应同步更新服务描述、Agent 主提示词和 Skill 中的模拟约定。
 
@@ -74,7 +80,7 @@
 
 报告样例存在“列1～列5”等占位列及“后续措施”人工信息，本接口未定义后续措施字段；映射到已有状态、负责人、结论、依据时使用准确的字段名，不补造字段或事实。
 
-报告使用 Skill 内置 `assets/labor-compliance-template.xlsx`，由原工作簿保留规则内容与版式生成，已清除样例数据和失效命名表公式。输出为 `.xlsx`，动态扩展客户与人员表，并增加完整“月度证据”和“核查与参数”页；不再生成 Markdown 报告。模板不依赖原 Documents 文件的位置。
+报告使用 Skill 内置 `assets/labor-compliance-template.xlsx`，与用户新版《风控报告模板.xlsx》一致。固定四页顺序为“灵工固定用工特征风控报告”“客户风险汇总”“命中人员明细”“月度证据”。生成时清除模板样例及示例判定公式，预警取上游值；动态扩展客户表、人员表、全部预警月份卡片及完整17字段证据表。客户核查资料和参数位于客户页下方，人员币种、关闭时间及参数从明细Q列起。输出仅为 `.xlsx`，不添加旧版规则页、“核查与参数”页或Markdown报告，也不依赖原模板路径。
 
 ## 运行时部署（WanScope）
 
@@ -96,11 +102,19 @@ WanScope 示例（以管理员平台登记的实际 Skill 名称替换 `labor-co
 ```json
 {
   "script": "labor-compliance-report-v1/scripts/generate_report.py",
-  "args": ["--mcp-result", "work/mcp-result.json", "--mock-data", "--output", "outputs/demo/report.xlsx"],
+  "args": ["--input", "<本次清单.path>", "--expected-sha256", "<本次清单.sha256>", "--expected-bytes", "<本次清单.bytes转为字符串>", "--mock-data", "--output", "outputs/demo/report.xlsx"],
   "timeout_seconds": 60
 }
 ```
 
-先调用已绑定 MCP、通过平台文件工具保存完整返回，再执行上述脚本；不要把 Token 或 MCP URL 当作脚本参数。服务默认脚本超时上限为60秒，传300也不会提高上限，较大数据需管理员调整 `WANSCOPE_SKILL_SCRIPT_TIMEOUT`。未验证平台连接和依赖时不能声称生产环境已跑通。
+先调用已绑定 MCP，直接采用平台保存的文件路径执行上述脚本；不要把 Token 或 MCP URL 当作脚本参数。服务默认脚本超时上限为60秒，传300也不会提高上限，较大数据需管理员调整 `WANSCOPE_SKILL_SCRIPT_TIMEOUT`。未验证平台连接和依赖时不能声称生产环境已跑通。
 
 模拟快照为2026-11-05：3客户、23条人员预警、90条月证据；R01为16条、R02为7条。客户A：U40/H12/R02 4/R03命中；B：U20/H8/R02 2/未命中；C：U30/H3/R02 1/未命中。三客户全量近3月金额合计1,278,600.00 CNY，预警人员部分474,600.00 CNY。它们是演示数据，不是从源流水实际跑出的生产统计。
+
+## 校验摘要与预览
+
+脚本版本 `labor-compliance-excel-v1-3-0`。正常生成不传 `--preview-dir`，仍校验三表、重算并扫描全部公式、核对 Excel 金额与精确十进制源数据。stdout 返回一份简洁 JSON，始终保存 `<报告名>.checks.json`。包含输入原文件哈希/大小及是否验证、输出路径/字节数/哈希、批次和规则版本、三表条数、R03/R02计数、分币种全量及预警人员金额、公式错误数、异常和耗时。`elapsed_seconds` 是脚本自身耗时，不是 Agent 全流程耗时。
+
+只在模板/版式改动、新规模首次验收或实际布局疑点时追加 `--preview-dir work/preview`。该模式另外导出四页PNG及原始工作簿 checks.json；常规模式不做逐图 Read、逐行 Excel 转文本或聊天手算。数据异常仍会写入报告，不因关闭PNG而跳过任何数据/公式检查。
+
+脚本只返回文件路径，不负责发布下载URL。WanScope 当前通过会话“文件”面板下载；只有调用方实际提供可用文件引用时才作为链接交付，不将 `outputs/...` 当作公网下载地址。报告目录不创建额外 README。

@@ -1,7 +1,7 @@
 interface:
   display_name: "劳务转灵工风控报告"
-  short_description: "通过 MCP 查询三表结果并写入 Excel 模板，生成全部预警与月度证据报告"
-  default_prompt: "使用 $labor-compliance-report-v1，通过已接入的劳务转灵工 MCP 获取计算结果，写入内置 Excel 模板，生成完整的 xlsx 风控报告并标明当前模拟数据。"
+  short_description: "直接读取 MCP 结果文件并写入 Excel 模板，生成全部预警与月度证据报告"
+  default_prompt: "使用 $labor-compliance-report-v1，通过已接入的劳务转灵工 MCP 获取结果文件，直接传路径并校验哈希，写入内置 Excel 模板，生成完整的 xlsx 风控报告并标明当前模拟数据。"
 dependencies:
   tools:
     - type: "mcp"
