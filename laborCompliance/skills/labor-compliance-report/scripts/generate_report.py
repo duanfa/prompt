@@ -21,9 +21,10 @@ HERE = Path(__file__).resolve().parent
 # Load trusted, bundled siblings from this location rather than the workspace cwd.
 sys.path.insert(0, str(HERE))
 from validate_results import CUSTOMERS, EVIDENCE, WORKERS, need, validate
+from exec_results import FIXED_TASKS, TASKS, excel_scalar, load_manifest
 
 SKILL = HERE.parent
-VERSION = "labor-compliance-excel-v1-3-0"
+VERSION = "labor-compliance-excel-v1-4-2"
 
 
 def read_result_file(filename, wrapped=False, expected_sha256=None, expected_bytes=None):
@@ -178,6 +179,59 @@ def generate_excel(payload, output, mock=False, template=None, node=None, module
             "evidence": len(payload[EVIDENCE]), **summary}
 
 
+def generate_exec_excel(payload, output, source, mock=False, template=None, node=None,
+                        modules=None, preview_dir=None, runtime_config=None):
+    """Export validated task results using their report's sheet assignments."""
+    output = Path(output).resolve()
+    template = Path(template or SKILL / "assets/labor-compliance-template.xlsx").resolve()
+    need(output.suffix.lower() == ".xlsx", "报告必须使用.xlsx格式")
+    need(template.is_file() and output != template, "模板不存在或输出试图覆盖模板")
+    node, modules = runtime_paths(node, modules, runtime_config)
+    jobs = payload["jobs"]
+    if payload["report_type"] == "fixed_employment":
+        detail, customer, evidence = FIXED_TASKS
+        workers = [detail]
+        notices = ["固定用工预警按人员明细、客户汇总、月度证据分别展示原始列。"]
+        if not jobs[evidence]["rows"]:
+            notices.append("本次月度证据任务成功返回0行。")
+    else:
+        r01, r02, customer = TASKS
+        workers, evidence = [r01, r02], None
+        notices = ["R01和R02为不同观察期的人员结果，行数分别列示。",
+                   "灵工分期任务没有独立月度证据表。"]
+    notices.append("原始列保留上游值。汇总口径、统一观察期及规则版本需查阅上游字段定义。")
+    with tempfile.TemporaryDirectory(prefix="labor-exec-excel-") as temp:
+        work = Path(temp)
+        (work / "node_modules").symlink_to(modules, target_is_directory=True)
+        shutil.copy2(HERE / "fill_task_results.mjs", work / "fill_task_results.mjs")
+        request = {"results": excel_scalar(payload), "issues": notices, "mock": mock or payload["mock"],
+                   "layout": {"workers": workers, "customer": customer, "evidence": evidence},
+                   "template": str(template), "output": str(output), "checksFile": str(work / "checks.json"),
+                   "previewDir": str(Path(preview_dir).resolve()) if preview_dir else None}
+        (work / "request.json").write_text(json.dumps(request, ensure_ascii=False, allow_nan=False), encoding="utf-8")
+        child = subprocess.run([node, str(work / "fill_task_results.mjs"), str(work / "request.json")],
+                               cwd=work, capture_output=True, text=True, timeout=300)
+        need(child.returncode == 0, "Excel写入失败：" + (child.stderr.strip() or child.stdout.strip()))
+        need((work / "checks.json").is_file(), "Excel脚本未返回校验摘要")
+        checks = json.loads((work / "checks.json").read_text(encoding="utf-8"))
+    counts = {biz: job["total"] for biz, job in jobs.items()}
+    need(checks.get("rows_by_biz_key") == counts, "工作簿行数与三项任务total不符")
+    need(type(checks.get("formula_error_count")) is int and checks["formula_error_count"] == 0, "Excel公式检查未通过")
+    need(output.is_file() and output.stat().st_size > 0, "报告文件不存在或为空")
+    try:
+        relative = str(output.relative_to(Path.cwd().resolve()))
+    except ValueError:
+        relative = None
+    return {"version": VERSION, "format": payload["format"], "report_type": payload["report_type"],
+            "output": str(output), "output_relative": relative,
+            "output_bytes": output.stat().st_size, "output_sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+            "formula_error_count": 0, "mock": request["mock"], "source": source,
+            "rows_by_biz_key": counts, "jobs": [{k: v for k, v in job.items() if k not in ("rows", "traceIds")}
+                                               for job in jobs.values()],
+            "business_mapping_verified": False,
+            "monthly_evidence_available": evidence is not None and counts[evidence] > 0, "data_issues": notices}
+
+
 def save_checks(filename, result):
     """Save the same compact checks even when PNG previews are disabled."""
     filename = Path(filename)
@@ -198,10 +252,12 @@ def save_checks(filename, result):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--version", action="version", version=VERSION)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--mcp-result", type=Path, help="已保存的 MCP tools/call 返回，支持 CallToolResult 或完整 JSON-RPC 响应")
     source.add_argument("--url", help="返回完整三表快照的 GET 接口")
     source.add_argument("--input", type=Path, help="已保存的三表 JSON 响应")
+    source.add_argument("--exec-manifest", type=Path, help="固定用工预警或灵工分期三表的MCP分页文件清单")
     parser.add_argument("--expected-sha256", help="MCP 文件清单中的原始文件 SHA-256，读取时校验")
     parser.add_argument("--expected-bytes", type=int, help="MCP 文件清单中的原始文件字节数，读取时校验")
     parser.add_argument("--output", type=Path, required=True, help="Excel .xlsx 报告路径")
@@ -215,7 +271,13 @@ def main():
     started = time.monotonic()
     try:
         checks_file = args.output.with_suffix(".checks.json").resolve()
-        if args.url:
+        if args.exec_manifest:
+            need(args.expected_sha256 is None and args.expected_bytes is None,
+                 "新版每页哈希与字节数放在任务清单pages内，不使用顶层expected参数")
+            payload, source = load_manifest(args.exec_manifest, protected=(args.output.resolve(), checks_file))
+            result = generate_exec_excel(payload, args.output, source, args.mock_data, args.template,
+                                         args.node, args.node_modules, args.preview_dir, args.runtime_config)
+        elif args.url:
             need(args.expected_sha256 is None and args.expected_bytes is None,
                  "MCP 文件哈希和字节数校验仅适用于 --input/--mcp-result")
             payload, is_mock = read_url(args.url)
@@ -226,8 +288,9 @@ def main():
             payload, source = read_result_file(source_path, bool(args.mcp_result),
                                                args.expected_sha256, args.expected_bytes)
             is_mock = False
-        result = generate_excel(payload, args.output, args.mock_data or is_mock, args.template,
-                                args.node, args.node_modules, args.preview_dir, args.runtime_config)
+        if not args.exec_manifest:
+            result = generate_excel(payload, args.output, args.mock_data or is_mock, args.template,
+                                    args.node, args.node_modules, args.preview_dir, args.runtime_config)
         result.update(source=source, checks_file=str(checks_file),
                       elapsed_seconds=round(time.monotonic() - started, 3),
                       preview_generated=args.preview_dir is not None)

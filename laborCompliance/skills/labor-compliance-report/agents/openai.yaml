@@ -1,11 +1,11 @@
 interface:
   display_name: "劳务转灵工风控报告"
-  short_description: "直接读取 MCP 结果文件并写入 Excel 模板，生成全部预警与月度证据报告"
-  default_prompt: "使用 $labor-compliance-report-v1，通过已接入的劳务转灵工 MCP 获取结果文件，直接传路径并校验哈希，写入内置 Excel 模板，生成完整的 xlsx 风控报告并标明当前模拟数据。"
+  short_description: "核对固定用工预警或历史灵工分期三表的分页结果，生成 Excel 报告"
+  default_prompt: "使用 $labor-compliance-report-v1，根据 offlineSqlResults 中的任务身份分页读取 MCP 结果，核验后生成四页 Excel 报告。"
 dependencies:
   tools:
     - type: "mcp"
       value: "labor-compliance"
-      description: "劳务转灵工计算结果查询，工具 get-labor-compliance-results，当前为固定批次模拟数据"
+      description: "DEV离线SQL执行结果查询，工具get-labor-compliance-results，参数execId/pageNo/pageSize，返回完整Resp及动态rows"
       transport: "streamable_http"
       url: "http://10.168.1.100:4445/servers/ec76ef3c8c3f4be6b64c463a2261b256/mcp"

@@ -1,40 +1,24 @@
-# 劳务转灵工报告 Agent
+# 灵工风控报告 Agent
 
-目录参照 `enterpriseAcess`：Agent 默认通过已接入 MCP 取数，Skill 负责计算结果校验与 Excel 模板填充。报告只输出 `.xlsx`。当前版本契约为 `labor-compliance-excel-v1-3-0`，主提示词保留原文件名以便原位更新。
+当前版本 `labor-compliance-excel-v1-4-2`，通过ContextForge读取DEV的离线SQL执行结果，输出Excel。
 
-- Agent 主提示词：[主提示词_v1-0-0_编排版.md](主提示词_v1-0-0_编排版.md)
-- Skill：[skills/labor-compliance-report/SKILL.md](skills/labor-compliance-report/SKILL.md)
-- Excel 模板：[labor-compliance-template.xlsx](skills/labor-compliance-report/assets/labor-compliance-template.xlsx)
-- Excel 示例：[labor-compliance-20261105.xlsx](examples/labor-compliance-20261105.xlsx)
+- [主提示词](主提示词_v1-0-0_编排版.md)
+- [Skill](skills/labor-compliance-report/SKILL.md)
+- [部署包](skills/labor-compliance-report/Archive.zip)
+- [接口及任务清单格式](skills/labor-compliance-report/references/api-contract.md)
+- [内置四页模板](skills/labor-compliance-report/assets/labor-compliance-template.xlsx)
 
-内置模板已原样替换为 `用工合规/风控报告模板.xlsx`，按用户新版保留四页顺序：灵工固定用工特征风控报告、客户风险汇总、命中人员明细、月度证据。生成时清除全部样例记录和公式，保留原有标题、栏目次序及蓝灰配色，按数据量扩展表格和全部预警的月度卡片。客户核查资料、参数和人员状态计数放客户页下方；人员币种、关闭时间及完整参数从明细Q列起；全部17个SQL证据字段放月度卡片下方。不依赖原模板所在位置。
-
-## 运行
-
-在 Agent 中绑定 `labor-compliance` MCP（Streamable HTTP，Bearer Token 由平台管理）：
-
+Agent读取网关注入的 `offlineSqlResults`。支持固定用工预警的人员明细、客户汇总和月度证据，也兼容历史灵工分期三表。MCP工具 `get-labor-compliance-results` 使用以下地址。
 ```text
 http://10.168.1.100:4445/servers/ec76ef3c8c3f4be6b64c463a2261b256/mcp
 ```
 
-工具名 `get-labor-compliance-results`，接受可选 `ds / customer_id / currency`。当前默认且仅支持 `20261105` 模拟批次。MCP 已配置文件返回：平台保存原始三表 JSON，Agent 把清单 path、sha256、bytes 直接交给脚本，不通过模型复制数据。接入详情见 [MCP 及结果口径](skills/labor-compliance-report/references/api-contract.md)。
+上游已改为 `POST http://dtsp-dev-api.10000da.vip/bdp-ontology/api/v1/ontology/sql-task/exec/data`。参数只有execId/pageNo/pageSize，保留完整业务包装及动态rows。文档使用code=OK/msg/data，DEV实测错误使用code=200/message/model/succeed；code=200也可能succeed=false，不能单看code判断成功。工具不再调用模拟容器，不接收ds/customer_id/currency。DEV业务登录认证已取消，ContextForge仍使用Bearer认证，凭据不进入Skill。
 
-Python 3.9+、Node.js、`@oai/artifact-tool`。脚本自动识别 Codex 捆绑运行时，也可以通过 `--node`、`--node-modules` 或 `LABOR_REPORT_NODE`、`LABOR_REPORT_NODE_MODULES` 指定。部署时需一同携带模板、references 和 scripts。
+Agent先取每任务第一页，通过MCP文件清单保存路径和哈希；写小任务清单并调用exec_results.py读取分页摘要；按实际pageSize取完剩余页后，用generate_report.py --exec-manifest生成。全程不通过模型转抄rows，不把单个文件的complete当成所有分页已齐。
 
-WanScope 的 `RunSkillScript` 使用 `python -I`、清空环境并重设 HOME；脚本已兼容隔离模式。管理员需在 Skill 根目录加入指向真实部署依赖的 `runtime.json`，或提供 `--runtime-config work/runtime.json`；详见[运行时部署](skills/labor-compliance-report/references/api-contract.md#运行时部署wanscope)。仅上传 Skill 并不会安装 Node 和 artifact-tool。
+报告沿用四页模板。固定用工预警的三张结果表按原始列写入对应页，成功空表显示0行。历史灵工分期的月度证据页标为“未提供”。脚本摘要记录报告类型、任务行数及是否有实际月度证据行。
 
-[Archive.zip](skills/labor-compliance-report/Archive.zip) 为本次 MCP 版 WanScope 部署包，ZIP 根目录包含 SKILL.md，排除缓存、`__MACOSX` 和旧压缩包，包含模板、scripts、references、agents 及本机已验证 Node/artifact-tool 路径的 `runtime.json`。迁移到其他机器时由管理员修改运行时路径；不打包 Token、`node_modules` 或历史报告。上传后需同步更新 Agent 主提示词并保持 MCP 绑定；本项目修改不会自动更新 WanScope 已安装版本。
+依赖Python3.9+、Node.js和@oai/artifact-tool。WanScope隔离运行使用Skill根目录runtime.json中的部署机路径。上传 `Archive.zip` 更新 `labor-compliance-report-v1`，绑定到 Agent，确认已开启 RunSkillScript 并同步主提示词。取数前执行 `generate_report.py --version` 确认安装版本。
 
-```bash
-cd /Users/duanfa/wanlianyida/prompt/laborCompliance
-python3 skills/labor-compliance-report/scripts/generate_report.py \
-  --input 'tool-results/<会话标识>/<本次结果文件>.json' \
-  --mock-data \
-  --output outputs/demo/report.xlsx
-```
-
-`--mcp-result` 接受完整 JSON-RPC 响应或其 `result` 中的 CallToolResult；先拒绝错误，再提取三张表。若已经保存原三表，使用 `--input /path/to/results.json`。模拟文件需加 `--mock-data`。用户明确指定其他 GET 来源时仍可用 `--url`，不能把 MCP URL 传入此参数，也不自动回退到 HTTP 或样例。脚本始终输出校验摘要并保存同名 `.checks.json`；有 MCP 清单时增加 `--expected-sha256`、`--expected-bytes`。仅需视觉验收时才用 `--preview-dir /tmp/labor-report-preview` 生成 PNG。三表内部仍按 SQL 原结构，不增加报告字段。
-
-模板默认可直接复用。`--template` 用于同版式模板替换，必须保留原工作表名称和卡片/表头位置；任意新模板需要同步修改填充映射。
-
-金额按 SQL 定义：客户全量有效发放金额与预警人员金额分列，不重复相加；多币种不混加。客户表和人员表的黄色区域分别维护本对象的核查信息；客户页下方按客户ID＋币种统计人员状态，表格排序后仍对应。总览展示数据异常；空返回不会残留模板演示记录，也不代表全部客户无风险。
+旧SQL快照仍支持 `--input`、`--mcp-result`、`--url`，原示例为旧版快照报告。
