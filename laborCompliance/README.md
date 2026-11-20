@@ -17,7 +17,7 @@ http://10.168.1.100:4445/servers/ec76ef3c8c3f4be6b64c463a2261b256/mcp
 
 Agent先取每任务第一页，通过MCP文件清单保存路径和哈希；写小任务清单并调用exec_results.py读取分页摘要；按实际pageSize取完剩余页后，用generate_report.py --exec-manifest生成。全程不通过模型转抄rows，不把单个文件的complete当成所有分页已齐。
 
-报告沿用四页模板。固定用工预警的三张结果表按原始列写入对应页，成功空表显示0行。历史灵工分期的月度证据页标为“未提供”。脚本摘要记录报告类型、任务行数及是否有实际月度证据行。
+报告沿用四页模板。固定用工预警总览展示五项业务指标，客户页展示指定的八个结果字段和五个留空列。人员明细保留原始列。月度证据展示指定字段，合并组内重复的标识列，逐月保留证据行。成功空表显示0行。历史灵工分期的月度证据页标为“未提供”。脚本摘要记录报告类型、任务行数及是否有实际月度证据行。
 
 分页结果导出使用 Python 3.9+ 和 openpyxl。预览及旧快照入口使用 Node.js 和 @oai/artifact-tool，路径配置在 Skill 根目录的 runtime.json。上传 `Archive.zip` 更新 `labor-compliance-report-v1`，绑定到 Agent，确认已开启 RunSkillScript 并同步主提示词。取数前执行 `generate_report.py --version` 确认安装版本。
 

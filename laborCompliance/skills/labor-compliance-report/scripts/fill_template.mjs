@@ -62,7 +62,10 @@ async function fill(request){
   widths(cs,[21,24,13,13,13,12,20,16,15,12,14,18,26,12,12,12]);
   widths(ws,[16,21,24,21,13,12,12,12,14,22,15,15,14,18,24,38,12,25,15,15,20,20,14,14,25,25,14,15,16,25]);
   widths(months,Array(16).fill(12));months.getRange('Q:Q').format.columnWidth=25;
-  for(const s of [main,cs,ws,months])s.showGridLines=false;
+  for(const s of [main,cs,ws,months]){
+    s.showGridLines=false;
+    s.freezePanes.unfreeze();
+  }
   const currencies=[...new Set(customers.map(r=>r.currency))].sort();
   write(cs,'A1','客户风险汇总 每行一个客户＋币种，可筛选客户及预警结果');
   table(cs,2,['客户ID','客户名称','发放人数U','规律人数H','命中占比','R02人数','涉及金额(元)','客户预警','核查优先级','币种','核查状态','负责人','核查结论'],
@@ -94,7 +97,6 @@ async function fill(request){
     ['待核查','核查中','已关闭'].forEach((status,j)=>formula(cs,`${col(11+j)}${row}`,`=COUNTIFS('命中人员明细'!$B$3:$B$${wbott},$A${row},'命中人员明细'!$Q$3:$Q$${wbott},$B${row},'命中人员明细'!$M$3:$M$${wbott},"${status}")`));
     formula(cs,`O${row}`,`=SUMIFS('命中人员明细'!$J$3:$J$${wbott},'命中人员明细'!$B$3:$B$${wbott},$A${row},'命中人员明细'!$Q$3:$Q$${wbott},$B${row})`);
   });
-  cs.freezePanes.freezeRows(2);cs.freezePanes.freezeColumns(2);ws.freezePanes.freezeRows(2);ws.freezePanes.freezeColumns(2);
 
   // Repeat the supplied six-month card for every alert. The full SQL evidence follows below.
   const byWarn=new Map();for(const e of evidence){if(!byWarn.has(e.warn_id))byWarn.set(e.warn_id,[]);byWarn.get(e.warn_id).push(e);}

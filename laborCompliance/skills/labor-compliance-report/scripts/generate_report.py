@@ -11,10 +11,13 @@ import subprocess
 import sys
 import tempfile
 import time
-from decimal import Decimal
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import urlopen
+from xml.dom.minidom import parseString
+from zipfile import ZipFile
 
 HERE = Path(__file__).resolve().parent
 # WanScope runs installed scripts with python -I, which omits the script directory.
@@ -25,6 +28,157 @@ from exec_results import FIXED_TASKS, TASKS, excel_scalar, load_manifest
 
 SKILL = HERE.parent
 VERSION = "labor-compliance-excel-v1-4-5"
+EVIDENCE_ID_COLUMNS = ("exec_id", "etl_batch_no", "warn_id", "rule_version", "customer_id", "worker_id")
+EVIDENCE_MONTH_COLUMNS = ("obs_month", "month_amount", "anchor_day", "window_start", "window_end",
+                          "window_amount", "window_ratio")
+EVIDENCE_HEADERS = dict(zip(EVIDENCE_ID_COLUMNS + EVIDENCE_MONTH_COLUMNS, (
+    "执行ID", "数据批次号", "预警ID", "规则版本", "客户ID", "灵工ID", "观察月份",
+    "月金额（元）", "当月锚定日", "窗口起始日", "窗口截止日", "窗口金额（元）", "窗口占比",
+)))
+CUSTOMER_COLUMNS = (
+    ("客户ID", "customer_id"), ("客户名称", "customer_name"), ("发放人数U", "total_worker_cnt"),
+    ("规律人数H", "regular_worker_cnt"), ("命中占比", "hit_worker_ratio"), ("R02人数", "r02_worker_cnt"),
+    ("涉及金额(元)", "involved_amount"), ("客户预警", "is_customer_warn"),
+)
+CUSTOMER_REVIEW_COLUMNS = ("核查优先级", "列1", "列2", "列3", "列12")
+CUSTOMER_NUMBER_FORMATS = {"命中占比": "0.00%", "涉及金额(元)": "#,##0.00"}
+WORKER_COLUMNS = (
+    ("预警ID", "warn_id"), ("客户ID", "customer_id"), ("客户名称", "customer_name"),
+    ("灵工ID", "worker_id"), ("脱敏姓名", "worker_name_masked"), ("主要规则", "main_rule"),
+    ("优先级", "priority"), ("覆盖月数", "cover_month_cnt"), ("金额波动率", "volatility"),
+    ("近3月累计应发金额(元)", "total_amount_3m"), ("固定发放日（系统识别）", "anchor_day"),
+    ("固定发放比例（%）", "min_window_ratio"),
+)
+WORKER_REVIEW_COLUMNS = ("列1", "列2", "列3", "列4", "列5")
+WORKER_NUMBER_FORMATS = {"金额波动率": "0.00%", "近3月累计应发金额(元)": "#,##0.00",
+                         "固定发放比例（%）": "0.00%"}
+REPORT_TIMEZONE = timezone(timedelta(hours=8))
+FIXED_HEADER_ROW = 1
+
+
+def worker_evidence_links(workers, evidence, groups, header_row):
+    first_data_row = header_row + 1
+    def key(warn_id, customer_id, worker_id):
+        values = (warn_id, customer_id, worker_id)
+        if all(type(value) in (str, int) and value != "" for value in values):
+            return tuple(str(value) for value in values)
+        return None
+
+    destinations = {}
+    for first, _ in groups:
+        row = evidence[first]
+        identity = key(row["warn_id"], row["customer_id"], row["worker_id"])
+        if identity is not None:
+            destinations.setdefault(identity, f"'月度证据'!C{first + first_data_row}")
+
+    links = {}
+    for index, row in enumerate(workers, first_data_row):
+        identity = key(row["预警ID"], row["客户ID"], row["灵工ID"])
+        if identity in destinations:
+            links[f"A{index}"] = destinations[identity]
+    return links
+
+
+def fixed_report_metadata(jobs):
+    calculated_at = None
+    for job in jobs.values():
+        for row in job["rows"]:
+            value = row.get("etl_time")
+            if not isinstance(value, str):
+                continue
+            try:
+                stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            stamp = stamp.astimezone(REPORT_TIMEZONE) if stamp.tzinfo else stamp.replace(tzinfo=REPORT_TIMEZONE)
+            if calculated_at is None or stamp > calculated_at:
+                calculated_at = stamp
+    if calculated_at is None:
+        calculated_at = datetime.now(REPORT_TIMEZONE)
+
+    run_month = calculated_at.year * 12 + calculated_at.month - 1
+    end_year, end_month = divmod(run_month - 1, 12)
+
+    def period(months, include_year):
+        start_year, start_month = divmod(run_month - months, 12)
+        if start_year != end_year:
+            return f"{start_year}年{start_month + 1}月—{end_year}年{end_month + 1}月"
+        year = f"{start_year}年" if include_year else ""
+        return f"{year}{start_month + 1}—{end_month + 1}月"
+
+    return {"reportDate": calculated_at.strftime("%Y-%m-%d\n%H:%M:%S"),
+            "period": f"{period(3, True)}；R02扩展至{period(6, False)}", "rule": "V1.0 / 人民币 CNY"}
+
+
+def customer_warning(value):
+    if value in (1, "1"):
+        return "R03命中"
+    if value in (0, "0"):
+        return "未命中"
+    return None
+
+
+def fixed_summary(customers, workers):
+    missing = "未提供"
+    customer_ids = [row.get("customer_id") for row in customers]
+    warnings = [(row.get("customer_id"), customer_warning(row.get("is_customer_warn"))) for row in customers]
+    by_rule = {rule: [row for row in workers if row.get("main_rule") == rule] for rule in ("R01", "R02")}
+
+    def count_pairs(rows):
+        pairs = [(row.get("customer_id"), row.get("worker_id")) for row in rows]
+        return len(set(pairs)) if all(valid_id(customer) and valid_id(worker) for customer, worker in pairs) else missing
+
+    def valid_id(value):
+        return type(value) in (str, int) and value != ""
+
+    amount = missing
+    r01 = by_rule["R01"]
+    if all(row.get("currency") == "CNY" for row in r01):
+        try:
+            amounts = [Decimal(str(row.get("total_amount_3m"))) for row in r01]
+            if all(value.is_finite() for value in amounts):
+                amount = excel_scalar(sum(amounts, Decimal("0.00")))
+        except InvalidOperation:
+            pass
+
+    all_customers = len(set(customer_ids)) if all(map(valid_id, customer_ids)) else missing
+    r03 = (len({customer for customer, flag in warnings if flag == "R03命中"})
+           if all_customers != missing and all(flag for _, flag in warnings) else missing)
+    r01_count, r02_count = (count_pairs(by_rule[rule]) for rule in ("R01", "R02"))
+    if any(row.get("main_rule") not in ("R01", "R02") for row in workers):
+        r01_count = r02_count = amount = missing
+    return [("已评估客户", all_customers), ("客户聚集预警", r03), ("客户－灵工预警数", r01_count),
+            ("重点人员预警数", r02_count), ("涉及金额（近3月，元）", amount)]
+
+
+def formatted_number(value):
+    if isinstance(value, str):
+        try:
+            number = Decimal(value)
+        except InvalidOperation:
+            return value
+        if number.is_finite():
+            return excel_scalar(number)
+    return value
+
+
+def project_rows(job, columns, review_columns, number_formats):
+    rows = []
+    for record in job["rows"]:
+        row = {label: record.get(field) for label, field in columns}
+        for label in number_formats:
+            row[label] = formatted_number(row[label])
+        rows.append(row)
+    job["rows"] = rows
+    return {"columns": tuple(label for label, _ in columns) + review_columns,
+            "blankColumns": review_columns, "numberFormats": number_formats}
+
+
+def project_customer_rows(job):
+    view = project_rows(job, CUSTOMER_COLUMNS, CUSTOMER_REVIEW_COLUMNS, CUSTOMER_NUMBER_FORMATS)
+    for row in job["rows"]:
+        row["客户预警"] = customer_warning(row["客户预警"])
+    return view
 
 
 def read_result_file(filename, wrapped=False, expected_sha256=None, expected_bytes=None):
@@ -179,6 +333,28 @@ def generate_excel(payload, output, mock=False, template=None, node=None, module
             "evidence": len(payload[EVIDENCE]), **summary}
 
 
+def group_monthly_evidence(job):
+    columns = EVIDENCE_ID_COLUMNS + EVIDENCE_MONTH_COLUMNS
+    groups = {}
+    for index, row in enumerate(job["rows"]):
+        identity = [row.get(column) for column in EVIDENCE_ID_COLUMNS]
+        key = index if any(value in (None, "") for value in identity) else json.dumps(identity, sort_keys=True)
+        projected = {column: row.get(column) for column in columns}
+        projected["window_ratio"] = formatted_number(projected["window_ratio"])
+        groups.setdefault(key, []).append(projected)
+
+    rows = []
+    group_ranges = []
+    for group in groups.values():
+        group.sort(key=lambda row: (row["obs_month"] in (None, ""), str(row["obs_month"])))
+        start = len(rows)
+        rows.extend(group)
+        group_ranges.append((start, len(rows)))
+    job["rows"] = rows
+    return {"columns": columns, "headers": EVIDENCE_HEADERS, "identityColumns": len(EVIDENCE_ID_COLUMNS),
+            "groups": group_ranges, "columnWidths": {"warn_id": 42}, "numberFormats": {"window_ratio": "0.00%"}}
+
+
 def generate_exec_excel(payload, output, source, mock=False, template=None, node=None,
                         modules=None, preview_dir=None, runtime_config=None):
     """Export validated task results using their report's sheet assignments."""
@@ -190,7 +366,7 @@ def generate_exec_excel(payload, output, source, mock=False, template=None, node
     if payload["report_type"] == "fixed_employment":
         detail, customer, evidence = FIXED_TASKS
         workers = [detail]
-        notices = ["固定用工预警按人员明细、客户汇总、月度证据分别展示原始列。"]
+        notices = ["固定用工预警分别展示人员明细、客户汇总和月度证据。月度证据按预警标识分组，逐月列示。"]
         if not jobs[evidence]["rows"]:
             notices.append("本次月度证据任务成功返回0行。")
     else:
@@ -198,10 +374,24 @@ def generate_exec_excel(payload, output, source, mock=False, template=None, node
         workers, evidence = [r01, r02], None
         notices = ["R01和R02为不同观察期的人员结果，行数分别列示。",
                    "灵工分期任务没有独立月度证据表。"]
-    notices.append("原始列保留上游值。汇总口径、统一观察期及规则版本需查阅上游字段定义。")
+    if evidence is None:
+        notices.append("原始列保留上游值。汇总口径、统一观察期及规则版本需查阅上游字段定义。")
+    else:
+        notices.append("客户按客户ID去重。人员按客户－灵工组合及主规则统计。涉及金额为R01近3月人民币金额之和。")
     export_mock = mock or payload["mock"]
     layout = {"workers": workers, "customer": customer, "evidence": evidence}
     results = excel_scalar(payload)
+    if evidence is not None:
+        layout["headerRow"] = FIXED_HEADER_ROW
+        layout["summaryMetadata"] = fixed_report_metadata(jobs)
+        layout["summaryMetrics"] = fixed_summary(jobs[customer]["rows"], jobs[detail]["rows"])
+        layout["customerView"] = project_customer_rows(results["jobs"][customer])
+        layout["workerView"] = project_rows(results["jobs"][detail], WORKER_COLUMNS,
+                                            WORKER_REVIEW_COLUMNS, WORKER_NUMBER_FORMATS)
+        layout["workerView"]["columnWidths"] = {"预警ID": 42, "客户名称": 32}
+        layout["evidenceView"] = group_monthly_evidence(results["jobs"][evidence])
+        layout["workerLinks"] = worker_evidence_links(results["jobs"][detail]["rows"], results["jobs"][evidence]["rows"],
+                                                      layout["evidenceView"]["groups"], FIXED_HEADER_ROW)
     if preview_dir or node or modules or runtime_config:
         checks = generate_exec_preview(results, layout, notices, export_mock, template, output,
                                        node, modules, preview_dir, runtime_config)
@@ -234,19 +424,52 @@ def generate_exec_excel(payload, output, source, mock=False, template=None, node
 def generate_exec_preview(results, layout, notices, mock, template, output,
                           node, modules, preview_dir, runtime_config):
     node, modules = runtime_paths(node, modules, runtime_config)
-    with tempfile.TemporaryDirectory(prefix="labor-exec-excel-") as temp:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".labor-exec-excel-", dir=output.parent) as temp:
         work = Path(temp)
+        staged = work / "report.xlsx"
         (work / "node_modules").symlink_to(modules, target_is_directory=True)
         shutil.copy2(HERE / "fill_task_results.mjs", work / "fill_task_results.mjs")
         request = {"results": results, "issues": notices, "mock": mock, "layout": layout,
-                   "template": str(template), "output": str(output), "checksFile": str(work / "checks.json"),
+                   "template": str(template), "output": str(staged), "checksFile": str(work / "checks.json"),
                    "previewDir": str(Path(preview_dir).resolve()) if preview_dir else None}
         (work / "request.json").write_text(json.dumps(request, ensure_ascii=False, allow_nan=False), encoding="utf-8")
         child = subprocess.run([node, str(work / "fill_task_results.mjs"), str(work / "request.json")],
                                cwd=work, capture_output=True, text=True, timeout=300)
         need(child.returncode == 0, "Excel写入失败：" + (child.stderr.strip() or child.stdout.strip()))
         need((work / "checks.json").is_file(), "Excel脚本未返回校验摘要")
-        return json.loads((work / "checks.json").read_text(encoding="utf-8"))
+        checks = json.loads((work / "checks.json").read_text(encoding="utf-8"))
+        if layout.get("workerLinks"):
+            add_preview_hyperlinks(staged, output, layout["workerLinks"])
+        else:
+            staged.replace(output)
+        return checks
+
+
+def add_preview_hyperlinks(staged, output, links):
+    """Add native links to the Node export without rewriting cell values or styles."""
+    sheet_path = "xl/worksheets/sheet3.xml"
+    pending = staged.with_name("linked.xlsx")
+    with ZipFile(staged) as source, ZipFile(pending, "w") as target:
+        with parseString(source.read(sheet_path)) as doc:
+            sheet = doc.documentElement
+            namespace = sheet.namespaceURI
+            prefix = f"{sheet.prefix}:" if sheet.prefix else ""
+            hyperlinks = doc.createElementNS(namespace, prefix + "hyperlinks")
+            later_tags = {"printOptions", "pageMargins", "pageSetup", "headerFooter", "rowBreaks", "colBreaks",
+                          "customProperties", "cellWatches", "ignoredErrors", "smartTags", "drawing", "legacyDrawing",
+                          "legacyDrawingHF", "picture", "oleObjects", "controls", "webPublishItems", "tableParts", "extLst"}
+            following = next((child for child in sheet.childNodes if child.localName in later_tags), None)
+            sheet.insertBefore(hyperlinks, following)
+            for address, location in links.items():
+                link = doc.createElementNS(namespace, prefix + "hyperlink")
+                link.setAttribute("ref", address)
+                link.setAttribute("location", location)
+                hyperlinks.appendChild(link)
+            sheet_xml = doc.toxml(encoding="utf-8")
+        for member in source.infolist():
+            target.writestr(member, sheet_xml if member.filename == sheet_path else source.read(member))
+    pending.replace(output)
 
 
 def save_checks(filename, result):
