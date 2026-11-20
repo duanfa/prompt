@@ -104,7 +104,7 @@ MCP文件模式每次保存原始完整Resp（保留code/message/model/succeed�
 
 ## 运行时部署
 
-常规分页导出使用 RunSkillScript 的 Python 3.9+ 环境和 openpyxl。RunSkillScript 使用 python -I，清空环境、重设 HOME，只允许工作区相对路径参数。预览和旧版快照入口使用 Node.js 与 @oai/artifact-tool，通过 Skill 根目录的 runtime.json 配置。
+常规分页导出使用 RunSkillScript 的 Python 3.9+ 环境。部署包的 `vendor/` 包含 openpyxl 3.1.5 和 et_xmlfile 2.0.0，脚本按自身安装目录加载依赖，运行时可离线导出。RunSkillScript 使用 python -I，清空环境、重设 HOME，只允许工作区相对路径参数。预览和旧版快照入口使用 Node.js 与 @oai/artifact-tool，通过 Skill 根目录的 runtime.json 配置。
 ```json
 {"node":"/deployment/node/bin/node","node_modules":"/deployment/node/node_modules"}
 ```

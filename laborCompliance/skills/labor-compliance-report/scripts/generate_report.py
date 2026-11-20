@@ -20,13 +20,13 @@ from xml.dom.minidom import parseString
 from zipfile import ZipFile
 
 HERE = Path(__file__).resolve().parent
+SKILL = HERE.parent
 # WanScope runs installed scripts with python -I, which omits the script directory.
-# Load trusted, bundled siblings from this location rather than the workspace cwd.
-sys.path.insert(0, str(HERE))
+# Load scripts and dependencies from the installed skill.
+sys.path[:0] = [str(HERE), str(SKILL / "vendor")]
 from validate_results import CUSTOMERS, EVIDENCE, WORKERS, need, validate
 from exec_results import FIXED_TASKS, TASKS, excel_scalar, load_manifest
 
-SKILL = HERE.parent
 VERSION = "labor-compliance-excel-v1-4-5"
 EVIDENCE_ID_COLUMNS = ("exec_id", "etl_batch_no", "warn_id", "rule_version", "customer_id", "worker_id")
 EVIDENCE_MONTH_COLUMNS = ("obs_month", "month_amount", "anchor_day", "window_start", "window_end",
@@ -401,7 +401,7 @@ def generate_exec_excel(payload, output, source, mock=False, template=None, node
         except ModuleNotFoundError as exc:
             if exc.name != "openpyxl":
                 raise
-            raise ValueError("当前 Python 运行时缺少 openpyxl，无法导出 Excel") from exc
+            raise ValueError("缺少 openpyxl，无法导出 Excel；请部署含 vendor 依赖的完整 Skill 包") from exc
         checks = export_exec_workbook(results, layout, notices, export_mock, template, output)
     counts = {biz: job["total"] for biz, job in jobs.items()}
     need(checks.get("rows_by_biz_key") == counts, "工作簿行数与三项任务total不符")

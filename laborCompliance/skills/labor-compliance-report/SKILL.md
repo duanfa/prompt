@@ -69,6 +69,6 @@ timeout_seconds = 300
 
 ## 环境与兼容
 
-分页结果导出使用 Python 3.9+ 及其环境内的 openpyxl。预览和旧快照入口使用管理员配置的 Node.js 运行时，详见[部署](references/api-contract.md#运行时部署)。ContextForge 使用平台配置的 Bearer Token，DEV 接口已取消业务登录认证。遇到认证错误时保留实际错误并交管理员核对配置。
+分页结果导出使用 Python 3.9+ 和部署包 `vendor/` 中随附的 openpyxl 及 et_xmlfile，运行时可离线导出。预览和旧快照入口使用管理员配置的 Node.js 运行时，详见[部署](references/api-contract.md#运行时部署)。ContextForge 使用平台配置的 Bearer Token，DEV 接口已取消业务登录认证。遇到认证错误时保留实际错误并交管理员核对配置。
 
 旧版原SQL快照仍可显式用 `--input / --mcp-result / --url` 兼容；旧字段字典仅适用于旧数据，不是当前MCP取数路径，不作新接口失败后的回退。

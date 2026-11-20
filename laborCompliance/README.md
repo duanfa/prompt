@@ -19,6 +19,17 @@ Agent先取每任务第一页，通过MCP文件清单保存路径和哈希；写
 
 报告沿用四页模板。固定用工预警总览展示五项业务指标，客户页展示指定的八个结果字段和五个留空列。人员明细保留原始列。月度证据展示指定字段，合并组内重复的标识列，逐月保留证据行。成功空表显示0行。历史灵工分期的月度证据页标为“未提供”。脚本摘要记录报告类型、任务行数及是否有实际月度证据行。
 
-分页结果导出使用 Python 3.9+ 和 openpyxl。预览及旧快照入口使用 Node.js 和 @oai/artifact-tool，路径配置在 Skill 根目录的 runtime.json。上传 `Archive.zip` 更新 `labor-compliance-report-v1`，绑定到 Agent，确认已开启 RunSkillScript 并同步主提示词。取数前执行 `generate_report.py --version` 确认安装版本。
+分页结果导出使用 Python 3.9+ 和部署包 `vendor/` 中随附的 openpyxl 及 et_xmlfile，运行时可离线导出。预览及旧快照入口使用 Node.js 和 @oai/artifact-tool，路径配置在 Skill 根目录的 runtime.json。上传 `Archive.zip` 更新 `labor-compliance-report-v1`，绑定到 Agent，确认已开启 RunSkillScript 并同步主提示词。取数前执行 `generate_report.py --version` 确认安装版本。
 
 旧SQL快照仍支持 `--input`、`--mcp-result`、`--url`，原示例为旧版快照报告。
+
+## 本地重打包
+
+在 `skills/labor-compliance-report` 目录执行下列命令。`vendor/` 已包含 openpyxl 和 et_xmlfile 及其许可证，重打包无需联网。
+
+```sh
+zip -q -r -X -FS Archive.zip SKILL.md agents assets/labor-compliance-template.xlsx \
+  references runtime.json scripts vendor \
+  -x '*/.DS_Store' '*/__pycache__/*' '*.pyc' '*.pyo'
+unzip -tq Archive.zip
+```
