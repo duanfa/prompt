@@ -6,6 +6,6 @@ dependencies:
   tools:
     - type: "mcp"
       value: "labor-compliance"
-      description: "DEV离线SQL执行结果查询，工具get-labor-compliance-results，参数execId/pageNo/pageSize，返回完整Resp及动态rows"
+      description: "DEV离线SQL执行结果查询，工具get-labor-compliance-results，参数execId/bizKey/pageNo/pageSize，返回完整Resp及动态rows"
       transport: "streamable_http"
       url: "http://10.168.1.100:4445/servers/ec76ef3c8c3f4be6b64c463a2261b256/mcp"

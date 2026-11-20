@@ -3,7 +3,7 @@ import path from 'node:path';
 import { FileBlob, SpreadsheetFile } from '@oai/artifact-tool';
 
 const NAMES=['灵工固定用工特征风控报告','客户风险汇总','命中人员明细','月度证据'];
-const COLOR={navy:'#223B57',text:'#202C39',section:'#EEF3F8',amber:'#FFF2CC'};
+const COLOR={navy:'#223B57',section:'#EEF3F8'};
 const column=n=>{let s='';for(n++;n>0;n=Math.floor((n-1)/26))s=String.fromCharCode(65+(n-1)%26)+s;return s;};
 const literal=v=>typeof v==='string'&&/^[=+@-]/.test(v)?`'${v}`:v;
 const scalar=v=>v===null?'未提供':typeof v==='object'?literal(JSON.stringify(v)):literal(v);
@@ -27,12 +27,10 @@ function rawTable(s,start,job,name){
   s.getRange(`A${start}:${last}${bottom}`).values=[headers,...(rows.length?rows:[Array(keys.length).fill(null)])];
   const table=s.tables.add(`A${start}:${last}${bottom}`,true,name);table.style='TableStyleMedium2';table.showFilterButton=true;
   s.getRange(`A${start}:${last}${start}`).format={fill:COLOR.navy,font:{name:'Microsoft YaHei',size:11,bold:true,color:'#FFFFFF'},wrapText:true,horizontalAlignment:'center',rowHeight:48};
-  s.getRange(`A${start+1}:${last}${bottom}`).format={font:{name:'Microsoft YaHei',size:11,color:COLOR.text},verticalAlignment:'center',rowHeight:40,wrapText:true};
-  s.getRange(`A${start+1}:${last}${bottom}`).setNumberFormat('@');
+  // Use the table style for body cells to avoid applying a separate style to every cell.
+  s.getRange(`A${start+1}:A${bottom}`).format.rowHeight=40;
   keys.forEach((key,i)=>{
     s.getRange(`${column(i)}:${column(i)}`).format.columnWidth=/time|date|table|name|conclusion|basis/i.test(key)?30:24;
-    // Identifiers and original string decimals remain text. Native numbers retain their type.
-    for(let j=0;j<job.rows.length;j++)if(typeof job.rows[j][key]==='number')s.getRange(`${column(i)}${start+j+1}`).setNumberFormat(Number.isInteger(job.rows[j][key])?'0':'0.###############');
   });
   return {header:start,bottom,keys};
 }
@@ -59,7 +57,7 @@ async function fill(request){
   main.getRange('A3:P8').clear({applyTo:'contents'});main.showGridLines=false;
   main.getRange('A:P').format.columnWidth=12;
   write(main,'A2','灵工固定用工特征风控报告 执行结果');
-  write(main,'A3',mock?'模拟数据验收报告；按任务分别展示原始结果。':'DEV业务接口结果；按任务分别展示，未将DEV自动视为模拟数据。');main.getRange('A3:P3').format.rowHeight=32;
+  write(main,'A3',mock?'模拟数据验收报告；按任务分别展示原始结果。':'按任务分别展示原始执行结果。');main.getRange('A3:P3').format.rowHeight=32;
   write(main,'A4','报告日期');write(main,'D4','观察期');write(main,'K4','规则版本');
   write(main,'C4','未提供');
   write(main,'F4',fixed?'见上游结果字段':'R01近3月；R02近6月；具体起止月见上游字段');

@@ -1,14 +1,15 @@
 # 新版 exec/data 接口契约
 
-版本为 `labor-compliance-excel-v1-4-2`。
+版本为 `labor-compliance-excel-v1-4-5`。
 
 ## ContextForge
 
 | 配置 | 值 |
 | --- | --- |
-| 服务 | labor-compliance |
+| 服务 | labor-compliance（DEV）或 labor-compliance-mysql（Fake API） |
 | 工具 | get-labor-compliance-results，名称以当前工具列表为准 |
-| MCP URL | http://10.168.1.100:4445/servers/ec76ef3c8c3f4be6b64c463a2261b256/mcp |
+| DEV MCP URL | http://10.168.1.100:4445/servers/ec76ef3c8c3f4be6b64c463a2261b256/mcp |
+| Fake API MCP URL | http://10.168.1.100:4445/servers/46e58485143246bea7edcd3007e18cfe/mcp |
 | 传输 | Streamable HTTP |
 | MCP认证 | 平台管理的ContextForge Bearer Token |
 | 上游环境 | DEV，调用方已确认 |
@@ -20,10 +21,10 @@
 ## 请求及响应
 
 ```json
-{"execId":90001,"pageNo":1,"pageSize":1000}
+{"execId":90001,"bizKey":"enterprise_fixed_emp_warn_detl","pageNo":1,"pageSize":1000}
 ```
 
-90001仅为文档示例，执行时必须替换为调用方实际已成功执行的execId。三个请求字段分别为Long、Integer、Integer；execId必填，pageNo默认1，pageSize默认100且最大1000。接口不接受domain/bizKey/resultTable作为请求体筛选参数。本工具不执行或轮询SQL任务，不直连数据库。
+90001 仅为文档示例。每页传入该任务的 `execId`（Long）和 `bizKey`（字符串）。`pageNo` 默认 1，`pageSize` 默认 100、最大 1000。DEV 按 `execId` 查执行结果。Fake API 按 `bizKey` 查 MySQL 最新固定用工批次，回传调用方的 `execId`，并在 `data.etlBatchNo` 标识实际批次。`domain` 和 `resultTable` 用于核验响应。
 
 标准成功响应示例。固定用工三表的 DEV 回放确认了 `code=OK/data`，包括成功空表。
 ```json
@@ -47,7 +48,7 @@
 
 接口也可能返回 `code/message/model/succeed`。参数错误也可使用 `code="200"`。只有 `code` 为字符串"200"或整数200、`succeed` 为布尔true且 `model` 是完整分页对象时才处理该包装。使用 `code=OK/data` 时，`succeed` 若存在也必须为布尔true。返回身份须匹配 [两组任务配对](../SKILL.md#调用方输入与接口)。`rows` 保留动态对象列。
 
-一项任务的全部页必须保持execId、taskId、domain、bizKey、resultTable、total、实际pageSize不变；pages按1…ceil(total/pageSize)排列。每个中间页应有pageSize行，末页为余数；total=0也需要第1页且rows=[]。不接受空中间页、错页、重复文件、不足或多出的页；聚合行数必须精确等于total。行含exec_id时也核对其值。没有新主键契约，不做跨行内容去重。
+一项任务的全部页必须保持execId、taskId、domain、bizKey、resultTable、total、实际pageSize不变；pages按1…ceil(total/pageSize)排列。每个中间页应有pageSize行，末页为余数；total=0也需要第1页且rows=[]。不接受空中间页、错页、重复文件、不足或多出的页；聚合行数必须精确等于total。行含exec_id时也核对其值。Fake API 返回的 `etlBatchNo` 必须在三项任务及全部页面中一致。没有新主键契约，不做跨行内容去重。
 
 ## 任务清单
 
@@ -103,13 +104,13 @@ MCP文件模式每次保存原始完整Resp（保留code/message/model/succeed�
 
 ## 运行时部署
 
-Python3.9+、Node.js、@oai/artifact-tool。WanScope的RunSkillScript使用python -I，清空环境、重设HOME，只允许工作区相对路径参数。管理员在Skill根目录配置runtime.json：
+常规分页导出使用 RunSkillScript 的 Python 3.9+ 环境和 openpyxl。RunSkillScript 使用 python -I，清空环境、重设 HOME，只允许工作区相对路径参数。预览和旧版快照入口使用 Node.js 与 @oai/artifact-tool，通过 Skill 根目录的 runtime.json 配置。
 ```json
 {"node":"/deployment/node/bin/node","node_modules":"/deployment/node/node_modules"}
 ```
 替换为部署机实际可访问路径；相对配置路径按runtime.json所在目录解析。不要把node_modules或认证凭据打包。优先级为命令行--node/--node-modules、runtime.json、环境变量、Codex默认路径。不修改管理员Skill或共享依赖。
 
-在 WanScope「技能」上传或更新 `labor-compliance-report-v1`，确认该 Agent 的工具配置已绑定该技能，并开启 `WANSCOPE_SKILL_SCRIPTS=on`。同步更新主提示词，开启新一轮调用，从 `generate_report.py --version` 核对加载版本。只有已安装的管理技能脚本可由 RunSkillScript 执行。常规timeout_seconds=60，更大规模超时上限由管理员调整。模板验收时可传--preview-dir。
+在 WanScope「技能」上传或更新 `labor-compliance-report-v1`，绑定到 Agent 并开启 `WANSCOPE_SKILL_SCRIPTS=on`。同步更新主提示词，从新一轮调用的 `generate_report.py --version` 核对加载版本。版本检查和分页校验使用 60 秒，Excel 导出使用 `timeout_seconds=300`。部署时设置 `WANSCOPE_SKILL_SCRIPT_TIMEOUT=300` 并重启服务，脚本执行上限取调用参数和服务配置的较小值。模板验收时可传 `--preview-dir`。
 
 ## 兼容旧版
 

@@ -142,6 +142,7 @@ def load_manifest(filename, protected=(), require_complete=True):
     need(report_type is not None, "任务清单须完整匹配固定用工预警或灵工分期三表")
     tasks = REPORT_TASKS[report_type]
     results, seen_execs, seen_files, files = {}, set(), set(), []
+    source_batches = set()
     for biz, table in tasks.items():
         job = jobs_by_key[biz]
         need(job.get("resultTable") == table, f"{biz}结果表与约定不符")
@@ -156,6 +157,12 @@ def load_manifest(filename, protected=(), require_complete=True):
             need(source["path"] not in seen_files, "分页文件被重复使用")
             seen_files.add(source["path"])
             data, trace = validate_page(response, job, page_no)
+            batch = data.get("etlBatchNo")
+            if "etlBatchNo" in data:
+                need(isinstance(batch, str) and re.fullmatch(r"[1-9][0-9]*", batch),
+                     "etlBatchNo 须为正整数的字符串表示")
+            source_batches.add(batch)
+            need(len(source_batches) == 1, "结果的 MySQL 批次不一致，停止合并")
             current = (data["taskId"], data["total"], data["pageSize"])
             if metadata is None:
                 metadata = current

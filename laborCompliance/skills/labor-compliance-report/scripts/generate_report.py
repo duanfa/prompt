@@ -24,7 +24,7 @@ from validate_results import CUSTOMERS, EVIDENCE, WORKERS, need, validate
 from exec_results import FIXED_TASKS, TASKS, excel_scalar, load_manifest
 
 SKILL = HERE.parent
-VERSION = "labor-compliance-excel-v1-4-2"
+VERSION = "labor-compliance-excel-v1-4-5"
 
 
 def read_result_file(filename, wrapped=False, expected_sha256=None, expected_bytes=None):
@@ -186,7 +186,6 @@ def generate_exec_excel(payload, output, source, mock=False, template=None, node
     template = Path(template or SKILL / "assets/labor-compliance-template.xlsx").resolve()
     need(output.suffix.lower() == ".xlsx", "报告必须使用.xlsx格式")
     need(template.is_file() and output != template, "模板不存在或输出试图覆盖模板")
-    node, modules = runtime_paths(node, modules, runtime_config)
     jobs = payload["jobs"]
     if payload["report_type"] == "fixed_employment":
         detail, customer, evidence = FIXED_TASKS
@@ -200,20 +199,20 @@ def generate_exec_excel(payload, output, source, mock=False, template=None, node
         notices = ["R01和R02为不同观察期的人员结果，行数分别列示。",
                    "灵工分期任务没有独立月度证据表。"]
     notices.append("原始列保留上游值。汇总口径、统一观察期及规则版本需查阅上游字段定义。")
-    with tempfile.TemporaryDirectory(prefix="labor-exec-excel-") as temp:
-        work = Path(temp)
-        (work / "node_modules").symlink_to(modules, target_is_directory=True)
-        shutil.copy2(HERE / "fill_task_results.mjs", work / "fill_task_results.mjs")
-        request = {"results": excel_scalar(payload), "issues": notices, "mock": mock or payload["mock"],
-                   "layout": {"workers": workers, "customer": customer, "evidence": evidence},
-                   "template": str(template), "output": str(output), "checksFile": str(work / "checks.json"),
-                   "previewDir": str(Path(preview_dir).resolve()) if preview_dir else None}
-        (work / "request.json").write_text(json.dumps(request, ensure_ascii=False, allow_nan=False), encoding="utf-8")
-        child = subprocess.run([node, str(work / "fill_task_results.mjs"), str(work / "request.json")],
-                               cwd=work, capture_output=True, text=True, timeout=300)
-        need(child.returncode == 0, "Excel写入失败：" + (child.stderr.strip() or child.stdout.strip()))
-        need((work / "checks.json").is_file(), "Excel脚本未返回校验摘要")
-        checks = json.loads((work / "checks.json").read_text(encoding="utf-8"))
+    export_mock = mock or payload["mock"]
+    layout = {"workers": workers, "customer": customer, "evidence": evidence}
+    results = excel_scalar(payload)
+    if preview_dir or node or modules or runtime_config:
+        checks = generate_exec_preview(results, layout, notices, export_mock, template, output,
+                                       node, modules, preview_dir, runtime_config)
+    else:
+        try:
+            from exec_excel import export_exec_workbook
+        except ModuleNotFoundError as exc:
+            if exc.name != "openpyxl":
+                raise
+            raise ValueError("当前 Python 运行时缺少 openpyxl，无法导出 Excel") from exc
+        checks = export_exec_workbook(results, layout, notices, export_mock, template, output)
     counts = {biz: job["total"] for biz, job in jobs.items()}
     need(checks.get("rows_by_biz_key") == counts, "工作簿行数与三项任务total不符")
     need(type(checks.get("formula_error_count")) is int and checks["formula_error_count"] == 0, "Excel公式检查未通过")
@@ -225,11 +224,29 @@ def generate_exec_excel(payload, output, source, mock=False, template=None, node
     return {"version": VERSION, "format": payload["format"], "report_type": payload["report_type"],
             "output": str(output), "output_relative": relative,
             "output_bytes": output.stat().st_size, "output_sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
-            "formula_error_count": 0, "mock": request["mock"], "source": source,
+            "formula_error_count": 0, "mock": export_mock, "source": source,
             "rows_by_biz_key": counts, "jobs": [{k: v for k, v in job.items() if k not in ("rows", "traceIds")}
                                                for job in jobs.values()],
             "business_mapping_verified": False,
             "monthly_evidence_available": evidence is not None and counts[evidence] > 0, "data_issues": notices}
+
+
+def generate_exec_preview(results, layout, notices, mock, template, output,
+                          node, modules, preview_dir, runtime_config):
+    node, modules = runtime_paths(node, modules, runtime_config)
+    with tempfile.TemporaryDirectory(prefix="labor-exec-excel-") as temp:
+        work = Path(temp)
+        (work / "node_modules").symlink_to(modules, target_is_directory=True)
+        shutil.copy2(HERE / "fill_task_results.mjs", work / "fill_task_results.mjs")
+        request = {"results": results, "issues": notices, "mock": mock, "layout": layout,
+                   "template": str(template), "output": str(output), "checksFile": str(work / "checks.json"),
+                   "previewDir": str(Path(preview_dir).resolve()) if preview_dir else None}
+        (work / "request.json").write_text(json.dumps(request, ensure_ascii=False, allow_nan=False), encoding="utf-8")
+        child = subprocess.run([node, str(work / "fill_task_results.mjs"), str(work / "request.json")],
+                               cwd=work, capture_output=True, text=True, timeout=300)
+        need(child.returncode == 0, "Excel写入失败：" + (child.stderr.strip() or child.stdout.strip()))
+        need((work / "checks.json").is_file(), "Excel脚本未返回校验摘要")
+        return json.loads((work / "checks.json").read_text(encoding="utf-8"))
 
 
 def save_checks(filename, result):
