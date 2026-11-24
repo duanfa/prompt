@@ -25,9 +25,9 @@ SKILL = HERE.parent
 # Load scripts and dependencies from the installed skill.
 sys.path[:0] = [str(HERE), str(SKILL / "vendor")]
 from validate_results import CUSTOMERS, EVIDENCE, WORKERS, need, validate
-from exec_results import FIXED_TASKS, TASKS, excel_scalar, load_manifest
+from exec_results import FIXED_TASKS, excel_scalar, load_manifest
 
-VERSION = "labor-compliance-excel-v1-4-6"
+VERSION = "labor-compliance-excel-v1-4-7"
 EVIDENCE_ID_COLUMNS = ("exec_id", "etl_batch_no", "warn_id", "rule_version", "customer_id", "worker_id")
 EVIDENCE_MONTH_COLUMNS = ("obs_month", "month_amount", "anchor_day", "window_start", "window_end",
                           "window_amount", "window_ratio")
@@ -363,37 +363,34 @@ def generate_exec_excel(payload, output, source, mock=False, template=None, node
     need(output.suffix.lower() == ".xlsx", "报告必须使用.xlsx格式")
     need(template.is_file() and output != template, "模板不存在或输出试图覆盖模板")
     jobs = payload["jobs"]
-    if payload["report_type"] == "fixed_employment":
-        detail, customer, evidence = FIXED_TASKS
-        workers = [detail]
-        notices = ["固定用工预警分别展示人员明细、客户汇总和月度证据。月度证据按预警标识分组，逐月列示。"]
-        if not jobs[evidence]["rows"]:
-            notices.append("本次月度证据任务成功返回0行。")
-    else:
-        r01, r02, customer = TASKS
-        workers, evidence = [r01, r02], None
-        notices = ["R01和R02为不同观察期的人员结果，行数分别列示。",
-                   "灵工分期任务没有独立月度证据表。"]
-    if evidence is None:
-        notices.append("原始列保留上游值。汇总口径、统一观察期及规则版本需查阅上游字段定义。")
-    else:
-        notices.append("客户按客户ID去重。人员按客户－灵工组合及主规则统计。涉及金额为R01近3月人民币金额之和。")
+    detail, customer, evidence = FIXED_TASKS
+    notices = ["固定用工预警分别展示人员明细、客户汇总和月度证据。月度证据按预警标识分组，逐月列示。"]
+    if not jobs[evidence]["rows"]:
+        notices.append("本次月度证据任务成功返回0行。")
+    notices.append("客户按客户ID去重。人员按客户－灵工组合及主规则统计。涉及金额为R01近3月人民币金额之和。")
     export_mock = mock or payload["mock"]
-    layout = {"workers": workers, "customer": customer, "evidence": evidence}
     results = excel_scalar(payload)
-    if evidence is not None:
-        layout["headerRow"] = FIXED_HEADER_ROW
-        layout["summaryMetadata"] = fixed_report_metadata(jobs)
-        layout["summaryMetrics"] = fixed_summary(jobs[customer]["rows"], jobs[detail]["rows"])
-        layout["customerView"] = project_customer_rows(results["jobs"][customer])
-        layout["workerView"] = project_rows(results["jobs"][detail], WORKER_COLUMNS,
-                                            WORKER_REVIEW_COLUMNS, WORKER_NUMBER_FORMATS)
-        layout["workerView"]["columnWidths"] = {"预警ID": 42, "客户名称": 32}
-        layout["evidenceView"] = group_monthly_evidence(results["jobs"][evidence])
-        layout["workerLinks"] = worker_evidence_links(results["jobs"][detail]["rows"], results["jobs"][evidence]["rows"],
-                                                      layout["evidenceView"]["groups"], FIXED_HEADER_ROW)
+    worker_view = project_rows(results["jobs"][detail], WORKER_COLUMNS,
+                               WORKER_REVIEW_COLUMNS, WORKER_NUMBER_FORMATS)
+    worker_view["columnWidths"] = {"预警ID": 42, "客户名称": 32}
+    evidence_view = group_monthly_evidence(results["jobs"][evidence])
+    layout = {
+        "worker": detail,
+        "customer": customer,
+        "evidence": evidence,
+        "headerRow": FIXED_HEADER_ROW,
+        "summaryMetadata": fixed_report_metadata(jobs),
+        "summaryMetrics": fixed_summary(jobs[customer]["rows"], jobs[detail]["rows"]),
+        "customerView": project_customer_rows(results["jobs"][customer]),
+        "workerView": worker_view,
+        "evidenceView": evidence_view,
+        "workerLinks": worker_evidence_links(
+            results["jobs"][detail]["rows"], results["jobs"][evidence]["rows"],
+            evidence_view["groups"], FIXED_HEADER_ROW,
+        ),
+    }
     if preview_dir or node or modules or runtime_config:
-        checks = generate_exec_preview(results, layout, notices, export_mock, template, output,
+        checks = generate_exec_preview(results, layout, export_mock, template, output,
                                        node, modules, preview_dir, runtime_config)
     else:
         try:
@@ -402,7 +399,7 @@ def generate_exec_excel(payload, output, source, mock=False, template=None, node
             if exc.name != "openpyxl":
                 raise
             raise ValueError("缺少 openpyxl，无法导出 Excel；请部署含 vendor 依赖的完整 Skill 包") from exc
-        checks = export_exec_workbook(results, layout, notices, export_mock, template, output)
+        checks = export_exec_workbook(results, layout, export_mock, template, output)
     counts = {biz: job["total"] for biz, job in jobs.items()}
     need(checks.get("rows_by_biz_key") == counts, "工作簿行数与三项任务total不符")
     need(type(checks.get("formula_error_count")) is int and checks["formula_error_count"] == 0, "Excel公式检查未通过")
@@ -418,10 +415,10 @@ def generate_exec_excel(payload, output, source, mock=False, template=None, node
             "rows_by_biz_key": counts, "jobs": [{k: v for k, v in job.items() if k not in ("rows", "traceIds")}
                                                for job in jobs.values()],
             "business_mapping_verified": False,
-            "monthly_evidence_available": evidence is not None and counts[evidence] > 0, "data_issues": notices}
+            "monthly_evidence_available": counts[evidence] > 0, "data_issues": notices}
 
 
-def generate_exec_preview(results, layout, notices, mock, template, output,
+def generate_exec_preview(results, layout, mock, template, output,
                           node, modules, preview_dir, runtime_config):
     node, modules = runtime_paths(node, modules, runtime_config)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -430,7 +427,7 @@ def generate_exec_preview(results, layout, notices, mock, template, output,
         staged = work / "report.xlsx"
         (work / "node_modules").symlink_to(modules, target_is_directory=True)
         shutil.copy2(HERE / "fill_task_results.mjs", work / "fill_task_results.mjs")
-        request = {"results": results, "issues": notices, "mock": mock, "layout": layout,
+        request = {"results": results, "mock": mock, "layout": layout,
                    "template": str(template), "output": str(staged), "checksFile": str(work / "checks.json"),
                    "previewDir": str(Path(preview_dir).resolve()) if preview_dir else None}
         (work / "request.json").write_text(json.dumps(request, ensure_ascii=False, allow_nan=False), encoding="utf-8")

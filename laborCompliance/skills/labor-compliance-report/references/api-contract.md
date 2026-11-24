@@ -1,6 +1,6 @@
 # 新版 exec/data 接口契约
 
-版本为 `labor-compliance-excel-v1-4-6`。
+版本为 `labor-compliance-excel-v1-4-7`。
 
 ## ContextForge
 
@@ -35,8 +35,8 @@
     "execId": 90001,
     "taskId": 1,
     "domain": "enterprise",
-    "bizKey": "enterprise_flexible_employ_r01",
-    "resultTable": "ads_esp_fes_entp_flxe_3m_manage_info_mi",
+    "bizKey": "enterprise_fixed_emp_warn_detl",
+    "resultTable": "fes_fixed_emp_warn_detl",
     "total": 0,
     "pageNo": 1,
     "pageSize": 1000,
@@ -46,7 +46,7 @@
 }
 ```
 
-接口也可能返回 `code/message/model/succeed`。参数错误也可使用 `code="200"`。只有 `code` 为字符串"200"或整数200、`succeed` 为布尔true且 `model` 是完整分页对象时才处理该包装。使用 `code=OK/data` 时，`succeed` 若存在也必须为布尔true。返回身份须匹配 [两组任务配对](../SKILL.md#调用方输入与接口)。`rows` 保留动态对象列。
+接口也可能返回 `code/message/model/succeed`。参数错误也可使用 `code="200"`。只有 `code` 为字符串"200"或整数200、`succeed` 为布尔true且 `model` 是完整分页对象时才处理该包装。使用 `code=OK/data` 时，`succeed` 若存在也必须为布尔true。返回身份须匹配 [固定用工预警任务配对](../SKILL.md#调用方输入与接口)。`rows` 保留动态对象列。
 
 一项任务的全部页必须保持execId、taskId、domain、bizKey、resultTable、total、实际pageSize不变；pages按1…ceil(total/pageSize)排列。每个中间页应有pageSize行，末页为余数；total=0也需要第1页且rows=[]。不接受空中间页、错页、重复文件、不足或多出的页；聚合行数必须精确等于total。行含exec_id时也核对其值。Fake API 返回的 `etlBatchNo` 必须在三项任务及全部页面中一致。没有新主键契约，不做跨行内容去重。
 
@@ -100,7 +100,6 @@ MCP文件模式每次保存原始完整Resp（保留code/message/model/succeed�
 ## 动态字段与报告边界
 
 - 固定用工预警报告类型为 `fixed_employment`，客户汇总、人员明细、月度证据分别写入对应页。成功空表显示0行。
-- 历史灵工分期报告类型为 `flexible_periods`，R03写客户页，R01和R02分表写人员页，月度证据标为“未提供”。
 - 长整数和高精度小数保留精度，null及缺失键显示“未提供”。完整业务字段和主键待确认，`business_mapping_verified=false`。`monthly_evidence_available=true` 表示工作簿包含实际证据行。
 - [旧字段字典](result-schema.json)和[原报告映射](rules-and-report.md)适用于旧版完整SQL快照。
 

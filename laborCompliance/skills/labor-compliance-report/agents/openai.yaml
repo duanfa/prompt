@@ -1,6 +1,6 @@
 interface:
   display_name: "劳务转灵工风控报告"
-  short_description: "核对固定用工预警或历史灵工分期三表的分页结果，生成 Excel 报告"
+  short_description: "核对固定用工预警三表的分页结果，生成 Excel 报告"
   default_prompt: "使用 $labor-compliance-report-v1，根据 offlineSqlResults 中的任务身份分页读取 MCP 结果，核验后生成四页 Excel 报告。"
 dependencies:
   tools:

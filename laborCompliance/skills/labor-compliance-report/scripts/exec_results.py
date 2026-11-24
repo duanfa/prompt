@@ -7,17 +7,11 @@ import re
 from decimal import Decimal
 from pathlib import Path
 
-TASKS = {
-    "enterprise_flexible_employ_r01": "ads_esp_fes_entp_flxe_3m_manage_info_mi",
-    "enterprise_flexible_employ_r02": "ads_esp_fes_entp_flxe_6m_manage_info_mi",
-    "enterprise_flexible_employ_r03": "ads_esp_fes_entp_3m_customer_sum_mi",
-}
 FIXED_TASKS = {
     "enterprise_fixed_emp_warn_detl": "fes_fixed_emp_warn_detl",
     "enterprise_fixed_emp_warn_sum": "fes_fixed_emp_warn_cust_sum",
     "enterprise_fixed_emp_warn_evidence": "fes_fixed_emp_warn_mon_evi",
 }
-REPORT_TASKS = {"flexible_periods": TASKS, "fixed_employment": FIXED_TASKS}
 FORMAT = "labor-compliance-exec-pages-v1"
 
 
@@ -140,13 +134,11 @@ def load_manifest(filename, protected=(), require_complete=True):
     need(all(isinstance(job, dict) and isinstance(job.get("bizKey"), str) for job in jobs),
          "任务须为带bizKey字符串的对象")
     jobs_by_key = {job["bizKey"]: job for job in jobs}
-    report_type = next((name for name, tasks in REPORT_TASKS.items() if jobs_by_key.keys() == tasks.keys()), None)
-    need(report_type is not None, "任务清单须完整匹配固定用工预警或灵工分期三表")
-    tasks = REPORT_TASKS[report_type]
+    need(jobs_by_key.keys() == FIXED_TASKS.keys(), "任务清单须完整匹配固定用工预警三表")
     results, seen_execs, seen_files, files, inline_files = {}, set(), set(), [], []
     source_batches = set()
     base = Path.cwd()
-    for biz, table in tasks.items():
+    for biz, table in FIXED_TASKS.items():
         job = jobs_by_key[biz]
         need(job.get("resultTable") == table, f"{biz}结果表与约定不符")
         exec_id = positive_id(job.get("execId"), "job.execId")
@@ -194,7 +186,7 @@ def load_manifest(filename, protected=(), require_complete=True):
                         "pageCount": page_count, "savedPageCount": len(pages), "complete": complete,
                         "nextPage": len(pages) + 1 if not complete else None,
                         "traceIds": traces, "rows": rows}
-    return {"format": FORMAT, "domain": "enterprise", "report_type": report_type,
+    return {"format": FORMAT, "domain": "enterprise", "report_type": "fixed_employment",
             "mock": manifest.get("mock", False), "jobs": results}, {
         "type": "exec-pages", "path": str(filename), "sha256": hashlib.sha256(raw).hexdigest(),
         "integrity_verified": not inline_files, "size_verified": not inline_files,
