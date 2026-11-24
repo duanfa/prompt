@@ -108,13 +108,15 @@ def validate_page(response, job, page_no):
     return data, response.get("traceId")
 
 
-def read_verified_file(item, base, protected=()):
-    need(isinstance(item, dict), "分页文件清单项须为对象")
+def resolve_page_path(item, base, protected):
     filename = item.get("path")
     need(isinstance(filename, str) and filename.strip(), "分页文件缺少path")
-    file_path = Path(filename)
-    file_path = (base / file_path).resolve() if not file_path.is_absolute() else file_path.resolve()
+    file_path = (base / filename).resolve()
     need(file_path not in protected, "输出路径不能覆盖输入分页文件")
+    return file_path
+
+
+def read_verified_file(item, file_path):
     sha, size = item.get("sha256"), item.get("bytes")
     need(isinstance(sha, str) and re.fullmatch(r"[0-9a-fA-F]{64}", sha), "分页文件缺少有效sha256")
     need(type(size) is int and size >= 0, "分页文件缺少有效bytes整数")
@@ -141,8 +143,9 @@ def load_manifest(filename, protected=(), require_complete=True):
     report_type = next((name for name, tasks in REPORT_TASKS.items() if jobs_by_key.keys() == tasks.keys()), None)
     need(report_type is not None, "任务清单须完整匹配固定用工预警或灵工分期三表")
     tasks = REPORT_TASKS[report_type]
-    results, seen_execs, seen_files, files = {}, set(), set(), []
+    results, seen_execs, seen_files, files, inline_files = {}, set(), set(), [], []
     source_batches = set()
+    base = Path.cwd()
     for biz, table in tasks.items():
         job = jobs_by_key[biz]
         need(job.get("resultTable") == table, f"{biz}结果表与约定不符")
@@ -153,9 +156,20 @@ def load_manifest(filename, protected=(), require_complete=True):
         need(isinstance(pages, list) and pages, f"{biz}须包含至少一页，包括total=0时的第一页")
         rows, traces, metadata = [], [], None
         for page_no, page in enumerate(pages, 1):
-            response, source = read_verified_file(page, Path.cwd(), protected)
-            need(source["path"] not in seen_files, "分页文件被重复使用")
-            seen_files.add(source["path"])
+            need(isinstance(page, dict), "分页清单项须为对象")
+            mode = page.get("mode", "file")
+            need(mode in ("file", "inline"), "分页清单mode须为file或inline")
+            file_path = resolve_page_path(page, base, protected)
+            need(file_path not in seen_files, "分页文件被重复使用")
+            seen_files.add(file_path)
+            if mode == "inline":
+                need(set(page) == {"mode", "path"}, "内联分页只接受mode和path")
+                need(file_path.is_relative_to(base), "内联分页须保存在工作区内")
+                response = json.loads(file_path.read_text(encoding="utf-8"), parse_float=Decimal)
+                inline_files.append(str(file_path))
+            else:
+                response, source = read_verified_file(page, file_path)
+                files.append(source)
             data, trace = validate_page(response, job, page_no)
             batch = data.get("etlBatchNo")
             if "etlBatchNo" in data:
@@ -169,7 +183,6 @@ def load_manifest(filename, protected=(), require_complete=True):
             need(current == metadata, "分页间taskId/total/pageSize变化，不能合并不一致快照")
             rows.extend(data["rows"])
             traces.append(trace)
-            files.append(source)
         task_id, total, size = metadata
         page_count = max(1, (total + size - 1) // size)
         need(len(pages) <= page_count, f"{biz}分页数量超出total")
@@ -184,7 +197,8 @@ def load_manifest(filename, protected=(), require_complete=True):
     return {"format": FORMAT, "domain": "enterprise", "report_type": report_type,
             "mock": manifest.get("mock", False), "jobs": results}, {
         "type": "exec-pages", "path": str(filename), "sha256": hashlib.sha256(raw).hexdigest(),
-        "integrity_verified": True, "size_verified": True, "files": files}
+        "integrity_verified": not inline_files, "size_verified": not inline_files,
+        "files": files, "inline_files": inline_files}
 
 
 def excel_scalar(value):
@@ -212,7 +226,9 @@ if __name__ == "__main__":
         jobs = [{k: v for k, v in job.items() if k not in ("rows", "traceIds")} for job in result["jobs"].values()]
         print(json.dumps({"format": FORMAT, "report_type": result["report_type"],
                           "complete": all(job["complete"] for job in jobs),
-                          "jobs": jobs, "integrity_verified": source["integrity_verified"]}, ensure_ascii=False))
+                          "jobs": jobs, "integrity_verified": source["integrity_verified"],
+                          "size_verified": source["size_verified"],
+                          "inline_page_count": len(source["inline_files"])}, ensure_ascii=False))
     except (ValueError, TypeError, OSError) as exc:
         print(f"结果页校验失败：{exc}", file=sys.stderr)
         sys.exit(2)

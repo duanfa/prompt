@@ -27,7 +27,7 @@ sys.path[:0] = [str(HERE), str(SKILL / "vendor")]
 from validate_results import CUSTOMERS, EVIDENCE, WORKERS, need, validate
 from exec_results import FIXED_TASKS, TASKS, excel_scalar, load_manifest
 
-VERSION = "labor-compliance-excel-v1-4-5"
+VERSION = "labor-compliance-excel-v1-4-6"
 EVIDENCE_ID_COLUMNS = ("exec_id", "etl_batch_no", "warn_id", "rule_version", "customer_id", "worker_id")
 EVIDENCE_MONTH_COLUMNS = ("obs_month", "month_amount", "anchor_day", "window_start", "window_end",
                           "window_amount", "window_ratio")
@@ -38,7 +38,7 @@ EVIDENCE_HEADERS = dict(zip(EVIDENCE_ID_COLUMNS + EVIDENCE_MONTH_COLUMNS, (
 CUSTOMER_COLUMNS = (
     ("客户ID", "customer_id"), ("客户名称", "customer_name"), ("发放人数U", "total_worker_cnt"),
     ("规律人数H", "regular_worker_cnt"), ("命中占比", "hit_worker_ratio"), ("R02人数", "r02_worker_cnt"),
-    ("涉及金额(元)", "involved_amount"), ("客户预警", "is_customer_warn"),
+    ("涉及金额(元)", "involved_amount"), ("客户预警 R03", "is_customer_warn"),
 )
 CUSTOMER_REVIEW_COLUMNS = ("核查优先级", "列1", "列2", "列3", "列12")
 CUSTOMER_NUMBER_FORMATS = {"命中占比": "0.00%", "涉及金额(元)": "#,##0.00"}
@@ -177,7 +177,7 @@ def project_rows(job, columns, review_columns, number_formats):
 def project_customer_rows(job):
     view = project_rows(job, CUSTOMER_COLUMNS, CUSTOMER_REVIEW_COLUMNS, CUSTOMER_NUMBER_FORMATS)
     for row in job["rows"]:
-        row["客户预警"] = customer_warning(row["客户预警"])
+        row["客户预警 R03"] = customer_warning(row["客户预警 R03"])
     return view
 
 
@@ -497,7 +497,7 @@ def main():
     source.add_argument("--mcp-result", type=Path, help="已保存的 MCP tools/call 返回，支持 CallToolResult 或完整 JSON-RPC 响应")
     source.add_argument("--url", help="返回完整三表快照的 GET 接口")
     source.add_argument("--input", type=Path, help="已保存的三表 JSON 响应")
-    source.add_argument("--exec-manifest", type=Path, help="固定用工预警或灵工分期三表的MCP分页文件清单")
+    source.add_argument("--exec-manifest", type=Path, help="固定用工预警或灵工分期三表的MCP分页清单")
     parser.add_argument("--expected-sha256", help="MCP 文件清单中的原始文件 SHA-256，读取时校验")
     parser.add_argument("--expected-bytes", type=int, help="MCP 文件清单中的原始文件字节数，读取时校验")
     parser.add_argument("--output", type=Path, required=True, help="Excel .xlsx 报告路径")

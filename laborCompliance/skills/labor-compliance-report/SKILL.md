@@ -1,11 +1,11 @@
 ---
 name: labor-compliance-report-v1
-description: 根据灵工风控任务的 offlineSqlResults，从 MCP 分页读取固定用工预警三表或历史灵工分期三表，核对执行身份和文件完整性，使用四页模板生成 Excel 报告。
+description: 根据灵工风控任务的 offlineSqlResults，从 MCP 分页读取固定用工预警三表或历史灵工分期三表，核对执行身份和分页完整性，使用四页模板生成 Excel 报告。
 ---
 
 # 灵工风控执行结果 Excel 报告
 
-版本契约为 `labor-compliance-excel-v1-4-5`。沿用[四页模板](assets/labor-compliance-template.xlsx)，交付 `.xlsx`。
+版本契约为 `labor-compliance-excel-v1-4-6`。沿用[四页模板](assets/labor-compliance-template.xlsx)，交付 `.xlsx`。
 
 ## 调用方输入与接口
 
@@ -28,8 +28,8 @@ execId是正Long整数，精确保留原值。缺项、错表、混组或未成�
 
 取数前用 RunSkillScript 调 `labor-compliance-report-v1/scripts/generate_report.py`，args 为 `["--version"]`，确认版本与本文一致。工具未开放、脚本未安装或路径/权限错误时，记录实际错误，说明需在 WanScope 上传并绑定此 Skill、开启 RunSkillScript。停止本次取数，避免用 Glob 搜索目录或 Read 转抄结果。
 
-1. 对三项任务分别获取第1页，建议pageSize=1000。平台 `mode=file` 保存原始响应；核实清单 `saved=true / complete=true / tool_state=success / encoding=text`。业务分页以脚本摘要为准。
-2. 将调用方任务身份和本次各页 `path/sha256/bytes` 写成小任务清单，格式见[接口契约](references/api-contract.md#任务清单)。只写文件引用和元数据，不Read或Write转抄rows。path保留平台工作区相对路径，按脚本当前工作区解析。
+1. 对三项任务分别获取第1页，建议pageSize=1000。平台返回文件清单时核实 `saved=true / complete=true / tool_state=success / encoding=text`，保留原始 `path/sha256/bytes`。平台直接返回完整内联 JSON 时，用 Write 将完整响应原样保存为每页独立的工作区 JSON 文件，保留包装、所有字段和 rows，记录 `mode=inline` 和 `path`。只有预览、摘要或截断内容时报告错误。
+2. 将调用方任务身份和每页引用写成小任务清单，格式见[接口契约](references/api-contract.md#任务清单)。相对 path 按脚本工作区解析。文件模式继续校验哈希和字节数，内联页无需这两项。
 3. 用 RunSkillScript 执行 `labor-compliance-report-v1/scripts/exec_results.py`，args为 `["--manifest","work/exec-manifest.json"]`，timeout_seconds=60。脚本校验原文件与业务包装，只返回每项total、实际pageSize、pageCount、nextPage及complete，不输出rows。
 4. 若摘要有nextPage，沿用该任务的 `execId`、`bizKey` 和**响应实际pageSize**取余下页，将各页清单按pageNo升序加入对应pages。每个任务只取本次执行和已绑定的数据源。total=0仍保留第1页成功响应。
 5. 分页齐全后执行一次报告脚本：
@@ -52,7 +52,7 @@ timeout_seconds = 300
 - 固定用工预警将客户汇总、人员明细、月度证据写入对应页。成功返回空表时显示0行。
 - 固定用工预警总览展示已评估客户、客户聚集预警、客户－灵工预警数、重点人员预警数和涉及金额（近3月，元）。全量客户和 `is_customer_warn=1` 的客户按 `customer_id` 去重。人员按 `main_rule=R01` 或 `R02` 分别统计客户－灵工组合。涉及金额仅加总 `main_rule=R01` 的人民币 `total_amount_3m`。
 - 固定用工预警的报告日期显示本批计算时间，以三表的最新 `etl_time` 为准。无有效时间时使用生成时间，均按北京时间显示。观察期为计算月之前最近的3个完整月，R02扩展至6个完整月。规则版本显示 `V1.0 / 人民币 CNY`，总览在五项指标后结束。
-- 客户页填充客户ID、客户名称、发放人数U、规律人数H、命中占比、R02人数、涉及金额(元)、客户预警。核查优先级、列1、列2、列3、列12只展示表头。
+- 客户页填充客户ID、客户名称、发放人数U、规律人数H、命中占比、R02人数、涉及金额(元)、客户预警 R03。核查优先级、列1、列2、列3、列12只展示表头。
 - 命中人员明细填充预警ID、客户ID、客户名称、灵工ID、脱敏姓名、主要规则、优先级、覆盖月数、金额波动率、近3月累计应发金额(元)、固定发放日（系统识别）、固定发放比例（%）。固定发放比例使用 `min_window_ratio`，即各月窗口占比的最小值。列1至列5只展示表头。
 - 月度证据展示执行ID、数据批次号、预警ID、规则版本、客户ID、灵工ID、观察月份、月金额（元）、当月锚定日、窗口起始日、窗口截止日、窗口金额（元）、窗口占比。前六列全部相同且完整时按组纵向合并。各组灰白交替，合并区域和每月单元格加细边框。组内按月份升序，每条证据保留一行。
 - 命中人员明细的预警ID按预警ID、客户ID和灵工ID关联月度证据。点击可跳到对应证据组的首行。同一组合有多组时跳至首组。没有匹配证据时保留预警ID文本。
@@ -63,7 +63,7 @@ timeout_seconds = 300
 
 ## 验收与交付
 
-检查退出码0、版本1-4-5、output_bytes>0、formula_error_count=0、source.integrity_verified及size_verified均为true、各项complete=true且rows_by_biz_key与total一致。`.checks.json`记录报告类型、执行身份、分页条数、输出哈希和业务映射范围。
+检查退出码0、版本1-4-6、output_bytes>0、formula_error_count=0、各项complete=true且rows_by_biz_key与total一致。全为文件模式时，source.integrity_verified和size_verified均为true。有内联页时这两项为false，source.inline_files记录内联页，source.files记录通过哈希和字节数校验的文件模式页。`.checks.json`记录报告类型、执行身份、分页条数、输出哈希和业务映射范围。
 
 最终用中文交付xlsx、实际取数来源和本次三项行数。固定用工报告对证据说明实际行数，历史灵工分期说明证据未提供。使用实际文件引用。只返回了 `output_relative` 时提示在会话“文件”面板下载。
 

@@ -1,6 +1,6 @@
 # 新版 exec/data 接口契约
 
-版本为 `labor-compliance-excel-v1-4-5`。
+版本为 `labor-compliance-excel-v1-4-6`。
 
 ## ContextForge
 
@@ -54,6 +54,8 @@
 
 MCP文件模式每次保存原始完整Resp（保留code/message/model/succeed或文档code/msg/data包装），也兼容保存CallToolResult或JSON-RPC包装。文件清单的complete仅表示该文件保存完整；先检查RPC错误/isError，再检查业务成功条件（含succeed），最后核对分页。
 
+平台直接返回完整内联 JSON 时，将完整响应原样保存为工作区文件，保留原包装、字段和值。该页清单项使用 `{"mode":"inline","path":"work/pages/detl-p1.json"}`，只含这两个字段。预览、截断内容和业务失败不能作为成功页。文件模式使用 `path/sha256/bytes`，可显式声明 `mode=file`，省略 mode 时也按文件模式处理。同一清单可混用两种页项。已有平台文件清单的页按文件模式验证，缺少或不匹配的哈希和字节数仍会报错。
+
 在工作区写一份小清单，放入 `offlineSqlResults` 的身份字段和各页文件引用。输入提供 `taskId` 时将其保留为每项的整数 `taskId`。以下示例使用固定用工预警三表。
 ```json
 {
@@ -91,9 +93,9 @@ MCP文件模式每次保存原始完整Resp（保留code/message/model/succeed�
 
 上述ID、路径、哈希和字节数均为格式示例，不能直接运行。用本次实际值；每个pages按返回页码升序追加。三个execId应分别对应各自任务。相对path按脚本工作目录（WanScope workspace）解析，**不是按清单所在目录解析**，不改写平台path。用户直接提供响应文件时，可由脚本/终端计算该原文件哈希和大小，不能声称是MCP签发的来源证明。
 
-执行scripts/exec_results.py --manifest work/exec-manifest.json，输出compact分页摘要，不输出rows。字段包括每项execId/taskId/bizKey/resultTable/total/pageSize/pageCount/savedPageCount/complete/nextPage。只有缺页时按nextPage和实际pageSize继续取数。源文件不全时此摘要允许complete=false，但报告脚本强制拒绝不完整任务。
+执行scripts/exec_results.py --manifest work/exec-manifest.json，输出分页摘要。字段包括内联页数 inline_page_count 和每项execId/taskId/bizKey/resultTable/total/pageSize/pageCount/savedPageCount/complete/nextPage。只有缺页时按nextPage和实际pageSize继续取数。源文件不全时此摘要允许complete=false，报告脚本拒绝导出不完整任务。
 
-报告入口scripts/generate_report.py --exec-manifest work/exec-manifest.json --output outputs/本次任务/report.xlsx。当前输入不需要顶层--expected-sha256/--expected-bytes，每页由清单分别校验。明确模拟数据时mock=true；DEV环境标签不代表模拟。
+报告入口scripts/generate_report.py --exec-manifest work/exec-manifest.json --output outputs/本次任务/report.xlsx。文件模式页由清单分别校验哈希和字节数。两种模式均验证业务响应、任务身份和分页。校验摘要的 `source.files` 记录已校验的文件模式页，`source.inline_files` 记录内联页路径。有内联页时，整份报告的 `source.integrity_verified` 和 `source.size_verified` 均为 false。只有明确模拟数据时设置mock=true。
 
 ## 动态字段与报告边界
 
