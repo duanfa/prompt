@@ -27,7 +27,7 @@ sys.path[:0] = [str(HERE), str(SKILL / "vendor")]
 from validate_results import CUSTOMERS, EVIDENCE, WORKERS, need, validate
 from exec_results import FIXED_TASKS, excel_scalar, load_manifest
 
-VERSION = "labor-compliance-excel-v1-4-7"
+VERSION = "labor-compliance-excel-v1-4-10"
 EVIDENCE_ID_COLUMNS = ("exec_id", "etl_batch_no", "warn_id", "rule_version", "customer_id", "worker_id")
 EVIDENCE_MONTH_COLUMNS = ("obs_month", "month_amount", "anchor_day", "window_start", "window_end",
                           "window_amount", "window_ratio")
@@ -106,8 +106,14 @@ def fixed_report_metadata(jobs):
         year = f"{start_year}年" if include_year else ""
         return f"{year}{start_month + 1}—{end_month + 1}月"
 
+    observation_months = []
+    for offset in range(3, 0, -1):
+        year, month = divmod(run_month - offset, 12)
+        observation_months.append(f"{year:04d}-{month + 1:02d}")
+
     return {"reportDate": calculated_at.strftime("%Y-%m-%d\n%H:%M:%S"),
-            "period": f"{period(3, True)}；R02扩展至{period(6, False)}", "rule": "V1.0 / 人民币 CNY"}
+            "period": f"{period(3, True)}；R02扩展至{period(6, False)}", "rule": "V1.0 / 人民币 CNY",
+            "observationMonths": observation_months}
 
 
 def customer_warning(value):
@@ -118,7 +124,25 @@ def customer_warning(value):
     return None
 
 
-def fixed_summary(customers, workers):
+def fixed_involved_amount(evidence, observation_months):
+    total = Decimal("0.00")
+    for row in evidence:
+        if row.get("obs_month") not in observation_months:
+            continue
+        value = row.get("window_amount")
+        if value in (None, ""):
+            continue
+        try:
+            amount = Decimal(str(value))
+        except InvalidOperation:
+            return "未提供"
+        if not amount.is_finite():
+            return "未提供"
+        total += amount
+    return excel_scalar(total)
+
+
+def fixed_summary(customers, workers, amount):
     missing = "未提供"
     customer_ids = [row.get("customer_id") for row in customers]
     warnings = [(row.get("customer_id"), customer_warning(row.get("is_customer_warn"))) for row in customers]
@@ -131,22 +155,12 @@ def fixed_summary(customers, workers):
     def valid_id(value):
         return type(value) in (str, int) and value != ""
 
-    amount = missing
-    r01 = by_rule["R01"]
-    if all(row.get("currency") == "CNY" for row in r01):
-        try:
-            amounts = [Decimal(str(row.get("total_amount_3m"))) for row in r01]
-            if all(value.is_finite() for value in amounts):
-                amount = excel_scalar(sum(amounts, Decimal("0.00")))
-        except InvalidOperation:
-            pass
-
     all_customers = len(set(customer_ids)) if all(map(valid_id, customer_ids)) else missing
     r03 = (len({customer for customer, flag in warnings if flag == "R03命中"})
            if all_customers != missing and all(flag for _, flag in warnings) else missing)
     r01_count, r02_count = (count_pairs(by_rule[rule]) for rule in ("R01", "R02"))
     if any(row.get("main_rule") not in ("R01", "R02") for row in workers):
-        r01_count = r02_count = amount = missing
+        r01_count = r02_count = missing
     return [("已评估客户", all_customers), ("客户聚集预警", r03), ("客户－灵工预警数", r01_count),
             ("重点人员预警数", r02_count), ("涉及金额（近3月，元）", amount)]
 
@@ -367,7 +381,9 @@ def generate_exec_excel(payload, output, source, mock=False, template=None, node
     notices = ["固定用工预警分别展示人员明细、客户汇总和月度证据。月度证据按预警标识分组，逐月列示。"]
     if not jobs[evidence]["rows"]:
         notices.append("本次月度证据任务成功返回0行。")
-    notices.append("客户按客户ID去重。人员按客户－灵工组合及主规则统计。涉及金额为R01近3月人民币金额之和。")
+    notices.append("客户按客户ID去重。人员按客户－灵工组合及主规则统计。涉及金额逐行加总最近3个完整月的月度证据窗口金额。")
+    metadata = fixed_report_metadata(jobs)
+    amount = fixed_involved_amount(jobs[evidence]["rows"], metadata["observationMonths"])
     export_mock = mock or payload["mock"]
     results = excel_scalar(payload)
     worker_view = project_rows(results["jobs"][detail], WORKER_COLUMNS,
@@ -379,8 +395,8 @@ def generate_exec_excel(payload, output, source, mock=False, template=None, node
         "customer": customer,
         "evidence": evidence,
         "headerRow": FIXED_HEADER_ROW,
-        "summaryMetadata": fixed_report_metadata(jobs),
-        "summaryMetrics": fixed_summary(jobs[customer]["rows"], jobs[detail]["rows"]),
+        "summaryMetadata": metadata,
+        "summaryMetrics": fixed_summary(jobs[customer]["rows"], jobs[detail]["rows"], amount),
         "customerView": project_customer_rows(results["jobs"][customer]),
         "workerView": worker_view,
         "evidenceView": evidence_view,
