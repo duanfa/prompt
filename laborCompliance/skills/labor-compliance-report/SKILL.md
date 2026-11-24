@@ -40,7 +40,7 @@ args = [
 timeout_seconds = 300
 ```
 
-只有调用方明确声明模拟数据时才在清单写mock=true或传 `--mock-data`。输出使用用户指定目录，否则用本次任务outputs目录。常规不传 `--preview-dir`；模板更改或首次规模验收时才启用。
+只有调用方明确声明模拟数据时才在清单写mock=true或传 `--mock-data`。输出路径固定为 `outputs/<本次请求标识>/labor-compliance.xlsx`：`<本次请求标识>` 取任务上下文中的requestId原值，不追加日期、批次或其他后缀，不改文件名，不使用业务input中的outputDir（网关只提供outputs下报表的下载）。生成成功后，reportUrl原样返回该相对路径。常规不传 `--preview-dir`；模板更改或首次规模验收时才启用。
 
 脚本接受已观察到的 `code=OK/data` 响应，也兼容 `code=200/succeed/model`，后者要求布尔 `succeed=true` 和完整分页对象。脚本拒绝业务失败、MCP/RPC错误、文件完整性错误、任务身份错配和不完整分页。导出超时后直接报告工具错误并保留任务清单和分页文件，避免用相同参数重试或用 Glob 搜索输出。参数错误有明确修正办法时可修正后再调用。
 
