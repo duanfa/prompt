@@ -19,14 +19,14 @@ description: 根据灵工风控任务的 offlineSqlResults，从 MCP 分页读�
 
 用已绑定的 `get-labor-compliance-results` 工具（`labor-compliance` 或 `labor-compliance-mysql`）。每一页都发送同一项任务的 **`execId`、`bizKey`、`pageNo`、`pageSize`**。DEV 按 `execId` 查询，本地 Fake API 按 `bizKey` 读取当前固定用工结果表并回传原 `execId`。用预期的 `resultTable` 核对响应。
 
-execId是正Long整数，精确保留原值。缺项、错表、任务不匹配或未成功时，在取数前说明问题。已有成功任务才进入分页。affectRows=0仍可能成功，报告行数以分页total为准。
+execId是正Long整数，精确保留原值。缺项、错表、任务不匹配或未成功时，在取数前说明问题。已有成功任务才进入分页。`affectRows` 仅供参考，不参与取数、分页或报告校验。字段缺失、为 0 或与分页 `total` 不一致时，继续按分页 `total` 和脚本校验结果生成报告。
 
 ## 文件与分页流程
 
 取数前用 RunSkillScript 调 `labor-compliance-report-v1/scripts/generate_report.py`，args 为 `["--version"]`，确认版本与本文一致。工具未开放、脚本未安装或路径/权限错误时，记录实际错误，说明需在 WanScope 上传并绑定此 Skill、开启 RunSkillScript。停止本次取数，避免用 Glob 搜索目录或 Read 转抄结果。
 
-1. 对三项任务分别获取第1页，建议pageSize=1000。平台返回文件清单时核实 `saved=true / complete=true / tool_state=success / encoding=text`，保留原始 `path/sha256/bytes`。平台直接返回完整内联 JSON 时，用 Write 将完整响应原样保存为每页独立的工作区 JSON 文件，保留包装、所有字段和 rows，记录 `mode=inline` 和 `path`。只有预览、摘要或截断内容时报告错误。
-2. 将调用方任务身份和每页引用写成小任务清单，格式见[接口契约](references/api-contract.md#任务清单)。相对 path 按脚本工作区解析。文件模式继续校验哈希和字节数，内联页无需这两项。
+1. 对三项任务分别获取第1页，建议pageSize=1000。平台返回文件清单时核实 `saved=true / complete=true / tool_state=success / encoding=text`，保留原始 `path`。平台直接返回完整内联 JSON 时，用 Write 将完整响应原样保存为每页独立的工作区 JSON 文件，保留包装、所有字段和 rows，记录 `mode=inline` 和 `path`。`sha256` 和 `bytes` 为可选元数据，不要求提供，也不参与校验。只有预览、摘要或截断内容时报告错误。
+2. 将调用方任务身份和每页引用写成小任务清单，格式见[接口契约](references/api-contract.md#任务清单)。相对 path 按脚本工作区解析。文件模式按 path 读取，sha256 和 bytes 为可选元数据，不参与校验。
 3. 用 RunSkillScript 执行 `labor-compliance-report-v1/scripts/exec_results.py`，args为 `["--manifest","work/exec-manifest.json"]`，timeout_seconds=60。脚本校验原文件与业务包装，只返回每项total、实际pageSize、pageCount、nextPage及complete，不输出rows。
 4. 若摘要有nextPage，沿用该任务的 `execId`、`bizKey` 和**响应实际pageSize**取余下页，将各页清单按pageNo升序加入对应pages。每个任务只取本次执行和已绑定的数据源。total=0仍保留第1页成功响应。
 5. 分页齐全后执行一次报告脚本：
@@ -59,7 +59,7 @@ timeout_seconds = 300
 
 ## 验收与交付
 
-检查退出码0、版本1-4-7、output_bytes>0、formula_error_count=0、各项complete=true且rows_by_biz_key与total一致。全为文件模式时，source.integrity_verified和size_verified均为true。有内联页时这两项为false，source.inline_files记录内联页，source.files记录通过哈希和字节数校验的文件模式页。`.checks.json`记录报告类型、执行身份、分页条数、输出哈希和业务映射范围。
+检查退出码0、版本1-4-7、output_bytes>0、formula_error_count=0、各项complete=true且rows_by_biz_key与total一致。`source.inline_files` 和 `source.files` 记录实际读取的页面，sha256和bytes不作为报告成功条件。`.checks.json`记录报告类型、执行身份、分页条数、输出哈希和业务映射范围。
 
 最终用中文交付xlsx、实际取数来源和本次三项行数。说明月度证据的实际行数。使用实际文件引用。只返回了 `output_relative` 时提示在会话“文件”面板下载。
 

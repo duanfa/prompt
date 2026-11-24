@@ -54,7 +54,7 @@
 
 MCP文件模式每次保存原始完整Resp（保留code/message/model/succeed或文档code/msg/data包装），也兼容保存CallToolResult或JSON-RPC包装。文件清单的complete仅表示该文件保存完整；先检查RPC错误/isError，再检查业务成功条件（含succeed），最后核对分页。
 
-平台直接返回完整内联 JSON 时，将完整响应原样保存为工作区文件，保留原包装、字段和值。该页清单项使用 `{"mode":"inline","path":"work/pages/detl-p1.json"}`，只含这两个字段。预览、截断内容和业务失败不能作为成功页。文件模式使用 `path/sha256/bytes`，可显式声明 `mode=file`，省略 mode 时也按文件模式处理。同一清单可混用两种页项。已有平台文件清单的页按文件模式验证，缺少或不匹配的哈希和字节数仍会报错。
+平台直接返回完整内联 JSON 时，将完整响应原样保存为工作区文件，保留原包装、字段和值。该页清单项使用 `{"mode":"inline","path":"work/pages/detl-p1.json"}`。预览、截断内容和业务失败不能作为成功页。文件模式使用 `path`，可显式声明 `mode=file`，省略 mode 时也按文件模式处理。`sha256` 和 `bytes` 为可选元数据，脚本读取本地文件并记录实际字节数和摘要，不要求清单提供或匹配这两个字段。同一清单可混用两种页项。
 
 在工作区写一份小清单，放入 `offlineSqlResults` 的身份字段和各页文件引用。输入提供 `taskId` 时将其保留为每项的整数 `taskId`。以下示例使用固定用工预警三表。
 ```json
@@ -68,7 +68,7 @@ MCP文件模式每次保存原始完整Resp（保留code/message/model/succeed�
       "bizKey": "enterprise_fixed_emp_warn_detl",
       "resultTable": "fes_fixed_emp_warn_detl",
       "pages": [
-        {"path":"tool-results/会话/r01-p1.json","sha256":"本次文件实际64位SHA256","bytes":1234}
+        {"path":"tool-results/会话/r01-p1.json"}
       ]
     },
     {
@@ -76,7 +76,7 @@ MCP文件模式每次保存原始完整Resp（保留code/message/model/succeed�
       "bizKey": "enterprise_fixed_emp_warn_sum",
       "resultTable": "fes_fixed_emp_warn_cust_sum",
       "pages": [
-        {"path":"tool-results/会话/r02-p1.json","sha256":"本次文件实际64位SHA256","bytes":1234}
+        {"path":"tool-results/会话/r02-p1.json"}
       ]
     },
     {
@@ -84,18 +84,18 @@ MCP文件模式每次保存原始完整Resp（保留code/message/model/succeed�
       "bizKey": "enterprise_fixed_emp_warn_evidence",
       "resultTable": "fes_fixed_emp_warn_mon_evi",
       "pages": [
-        {"path":"tool-results/会话/r03-p1.json","sha256":"本次文件实际64位SHA256","bytes":1234}
+        {"path":"tool-results/会话/r03-p1.json"}
       ]
     }
   ]
 }
 ```
 
-上述ID、路径、哈希和字节数均为格式示例，不能直接运行。用本次实际值；每个pages按返回页码升序追加。三个execId应分别对应各自任务。相对path按脚本工作目录（WanScope workspace）解析，**不是按清单所在目录解析**，不改写平台path。用户直接提供响应文件时，可由脚本/终端计算该原文件哈希和大小，不能声称是MCP签发的来源证明。
+上述ID和路径均为格式示例，不能直接运行。用本次实际值；每个pages按返回页码升序追加。三个execId应分别对应各自任务。相对path按脚本工作目录（WanScope workspace）解析，**不是按清单所在目录解析**，不改写平台path。脚本会记录本地文件的哈希和大小，但不把清单哈希和字节数作为报告成功条件，也不声称是MCP签发的来源证明。
 
-执行scripts/exec_results.py --manifest work/exec-manifest.json，输出分页摘要。字段包括内联页数 inline_page_count 和每项execId/taskId/bizKey/resultTable/total/pageSize/pageCount/savedPageCount/complete/nextPage。只有缺页时按nextPage和实际pageSize继续取数。源文件不全时此摘要允许complete=false，报告脚本拒绝导出不完整任务。
+执行scripts/exec_results.py --manifest work/exec-manifest.json，输出分页摘要。字段包括内联页数 inline_page_count 和每项execId/taskId/bizKey/resultTable/total/pageSize/pageCount/savedPageCount/complete/nextPage。只有缺页时按nextPage和实际pageSize继续取数。源文件不全时此摘要允许complete=false，报告脚本拒绝导出不完整任务。执行摘要的 `affectRows` 仅供参考，分页完整性和导出行数均按取数接口的 `total` 校验。
 
-报告入口scripts/generate_report.py --exec-manifest work/exec-manifest.json --output outputs/本次任务/report.xlsx。文件模式页由清单分别校验哈希和字节数。两种模式均验证业务响应、任务身份和分页。校验摘要的 `source.files` 记录已校验的文件模式页，`source.inline_files` 记录内联页路径。有内联页时，整份报告的 `source.integrity_verified` 和 `source.size_verified` 均为 false。只有明确模拟数据时设置mock=true。
+报告入口scripts/generate_report.py --exec-manifest work/exec-manifest.json --output outputs/本次任务/report.xlsx。文件模式页按本地文件读取。两种模式均验证业务响应、任务身份和分页。校验摘要的 `source.files` 记录文件页，`source.inline_files` 记录内联页路径。`source.integrity_verified` 和 `source.size_verified` 不作为报告成功条件。只有明确模拟数据时设置mock=true。
 
 ## 动态字段与报告边界
 

@@ -111,14 +111,13 @@ def resolve_page_path(item, base, protected):
 
 
 def read_verified_file(item, file_path):
-    sha, size = item.get("sha256"), item.get("bytes")
-    need(isinstance(sha, str) and re.fullmatch(r"[0-9a-fA-F]{64}", sha), "分页文件缺少有效sha256")
-    need(type(size) is int and size >= 0, "分页文件缺少有效bytes整数")
+    """Read a saved page and record local metadata without requiring a manifest hash."""
     raw = file_path.read_bytes()
-    need(len(raw) == size, "分页文件字节数与MCP清单不符")
     digest = hashlib.sha256(raw).hexdigest()
-    need(digest == sha.lower(), "分页文件SHA-256与MCP清单不符")
-    return json.loads(raw.decode("utf-8"), parse_float=Decimal), {"path": str(file_path), "bytes": size, "sha256": digest}
+    return json.loads(raw.decode("utf-8"), parse_float=Decimal), {
+        "path": str(file_path), "bytes": len(raw), "sha256": digest,
+        "integrity_verified": False, "size_verified": False,
+    }
 
 
 def load_manifest(filename, protected=(), require_complete=True):
@@ -189,7 +188,7 @@ def load_manifest(filename, protected=(), require_complete=True):
     return {"format": FORMAT, "domain": "enterprise", "report_type": "fixed_employment",
             "mock": manifest.get("mock", False), "jobs": results}, {
         "type": "exec-pages", "path": str(filename), "sha256": hashlib.sha256(raw).hexdigest(),
-        "integrity_verified": not inline_files, "size_verified": not inline_files,
+        "integrity_verified": False, "size_verified": False,
         "files": files, "inline_files": inline_files}
 
 
