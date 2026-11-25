@@ -5,7 +5,7 @@ description: 根据灵工风控任务的 offlineSqlResults，从 MCP 分页读�
 
 # 灵工风控执行结果 Excel 报告
 
-版本契约为 `labor-compliance-excel-v1-4-11`。沿用[四页模板](assets/labor-compliance-template.xlsx)，交付 `.xlsx`。
+版本契约为 `labor-compliance-excel-v1-4-12`。沿用[四页模板](assets/labor-compliance-template.xlsx)，交付 `.xlsx`。
 
 ## 调用方输入与接口
 
@@ -47,7 +47,7 @@ timeout_seconds = 300
 ## 工作簿口径
 
 - 固定用工预警将客户汇总、人员明细、月度证据写入对应页。成功返回空表时显示0行。
-- 固定用工预警总览展示已评估客户、客户聚集预警、客户－灵工预警数、重点人员预警数和涉及金额（近3月，元）。全量客户和 `is_customer_warn=1` 的客户按 `customer_id` 去重。人员按 `main_rule=R01` 或 `R02` 分别统计客户－灵工组合。涉及金额取本批月度证据，按观察月份 `obs_month` 筛选最近3个完整自然月，逐行加总 R01 证据的窗口金额 `window_amount`（元）。
+- 固定用工预警总览展示已评估客户、客户聚集预警、客户－灵工预警数、重点人员预警数和涉及金额（近3月，元）。全量客户和 `is_customer_warn=1` 的客户按 `customer_id` 去重。人员按 `main_rule=R01` 或 `R02` 分别统计客户－灵工组合。涉及金额为本批客户汇总页各行「涉及金额(元)」的合计，直接加总上游 `involved_amount`。
 - 固定用工预警的报告日期显示本批计算时间，以三表的最新 `etl_time` 为准。无有效时间时使用生成时间，均按北京时间显示。观察期为计算月之前最近的3个完整月，R02扩展至6个完整月。规则版本显示 `V1.0 / 人民币 CNY`，总览在五项指标后结束。
 - 客户页填充客户ID、客户名称、发放人数U、规律人数H、命中占比、R02人数、涉及金额(元)、客户预警 R03。核查优先级、列1、列2、列3、列12只展示表头。
 - 命中人员明细填充预警ID、客户ID、客户名称、灵工ID、脱敏姓名、主要规则、优先级、覆盖月数、金额波动率、近3月累计应发金额(元)、固定发放日（系统识别）、固定发放比例（%）。固定发放比例使用 `min_window_ratio`，即各月窗口占比的最小值。列1至列5只展示表头。
@@ -59,7 +59,7 @@ timeout_seconds = 300
 
 ## 验收与交付
 
-检查退出码0、版本1-4-11、output_bytes>0、formula_error_count=0、各项complete=true且rows_by_biz_key与total一致。`source.inline_files` 和 `source.files` 记录实际读取的页面，sha256和bytes不作为报告成功条件。`.checks.json`记录报告类型、执行身份、分页条数、输出哈希和业务映射范围。
+检查退出码0、版本1-4-12、output_bytes>0、formula_error_count=0、各项complete=true且rows_by_biz_key与total一致。`source.inline_files` 和 `source.files` 记录实际读取的页面，sha256和bytes不作为报告成功条件。`.checks.json`记录报告类型、执行身份、分页条数、输出哈希和业务映射范围。
 
 最终用中文交付xlsx、实际取数来源和本次三项行数。说明月度证据的实际行数。使用实际文件引用。只返回了 `output_relative` 时提示在会话“文件”面板下载。
 

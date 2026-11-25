@@ -27,7 +27,7 @@ sys.path[:0] = [str(HERE), str(SKILL / "vendor")]
 from validate_results import CUSTOMERS, EVIDENCE, WORKERS, need, validate
 from exec_results import FIXED_TASKS, excel_scalar, load_manifest
 
-VERSION = "labor-compliance-excel-v1-4-11"
+VERSION = "labor-compliance-excel-v1-4-12"
 EVIDENCE_ID_COLUMNS = ("exec_id", "etl_batch_no", "warn_id", "rule_version", "customer_id", "worker_id")
 EVIDENCE_MONTH_COLUMNS = ("obs_month", "month_amount", "anchor_day", "window_start", "window_end",
                           "window_amount", "window_ratio")
@@ -106,14 +106,8 @@ def fixed_report_metadata(jobs):
         year = f"{start_year}年" if include_year else ""
         return f"{year}{start_month + 1}—{end_month + 1}月"
 
-    observation_months = []
-    for offset in range(3, 0, -1):
-        year, month = divmod(run_month - offset, 12)
-        observation_months.append(f"{year:04d}-{month + 1:02d}")
-
     return {"reportDate": calculated_at.strftime("%Y-%m-%d\n%H:%M:%S"),
-            "period": f"{period(3, True)}；R02扩展至{period(6, False)}", "rule": "V1.0 / 人民币 CNY",
-            "observationMonths": observation_months}
+            "period": f"{period(3, True)}；R02扩展至{period(6, False)}", "rule": "V1.0 / 人民币 CNY"}
 
 
 def customer_warning(value):
@@ -124,32 +118,11 @@ def customer_warning(value):
     return None
 
 
-def fixed_involved_amount(evidence, workers, observation_months):
-    def warning_key(row):
-        return tuple(str(row.get(field) or "") for field in ("warn_id", "customer_id", "worker_id"))
-
-    r01_warnings = {warning_key(row) for row in workers if row.get("main_rule") == "R01"}
+def fixed_involved_amount(customers):
     total = Decimal("0.00")
-    for row in evidence:
-        if row.get("obs_month") not in observation_months:
-            continue
-        key = warning_key(row)
-        if not all(key):
-            continue
-        if key not in r01_warnings:
-            warn_id, customer_id, worker_id = key
-            currency = row.get("currency")
-            if not (isinstance(currency, str) and currency):
-                continue
-            # The rule-specific SQL encodes the rule even if the detail row is absent.
-            r01_key = f"{customer_id}|{worker_id}|R01|{currency}".encode("utf-8")
-            if warn_id.lower() != "wf" + hashlib.md5(r01_key).hexdigest():
-                continue
-        value = row.get("window_amount")
-        if value in (None, ""):
-            continue
+    for row in customers:
         try:
-            amount = Decimal(str(value))
+            amount = Decimal(str(row.get("involved_amount")))
         except InvalidOperation:
             return "未提供"
         if not amount.is_finite():
@@ -158,7 +131,7 @@ def fixed_involved_amount(evidence, workers, observation_months):
     return excel_scalar(total)
 
 
-def fixed_summary(customers, workers, amount):
+def fixed_summary(customers, workers):
     missing = "未提供"
     customer_ids = [row.get("customer_id") for row in customers]
     warnings = [(row.get("customer_id"), customer_warning(row.get("is_customer_warn"))) for row in customers]
@@ -178,7 +151,7 @@ def fixed_summary(customers, workers, amount):
     if any(row.get("main_rule") not in ("R01", "R02") for row in workers):
         r01_count = r02_count = missing
     return [("已评估客户", all_customers), ("客户聚集预警", r03), ("客户－灵工预警数", r01_count),
-            ("重点人员预警数", r02_count), ("涉及金额（近3月，元）", amount)]
+            ("重点人员预警数", r02_count), ("涉及金额（近3月，元）", fixed_involved_amount(customers))]
 
 
 def formatted_number(value):
@@ -397,9 +370,8 @@ def generate_exec_excel(payload, output, source, mock=False, template=None, node
     notices = ["固定用工预警分别展示人员明细、客户汇总和月度证据。月度证据按预警标识分组，逐月列示。"]
     if not jobs[evidence]["rows"]:
         notices.append("本次月度证据任务成功返回0行。")
-    notices.append("客户按客户ID去重。人员按客户－灵工组合及主规则统计。涉及金额逐行加总最近3个完整月的R01月度证据窗口金额。")
+    notices.append("客户人数按客户ID去重。人员按客户－灵工组合及主规则统计。涉及金额为客户风险汇总页各行涉及金额之和。")
     metadata = fixed_report_metadata(jobs)
-    amount = fixed_involved_amount(jobs[evidence]["rows"], jobs[detail]["rows"], metadata["observationMonths"])
     export_mock = mock or payload["mock"]
     results = excel_scalar(payload)
     worker_view = project_rows(results["jobs"][detail], WORKER_COLUMNS,
@@ -412,7 +384,7 @@ def generate_exec_excel(payload, output, source, mock=False, template=None, node
         "evidence": evidence,
         "headerRow": FIXED_HEADER_ROW,
         "summaryMetadata": metadata,
-        "summaryMetrics": fixed_summary(jobs[customer]["rows"], jobs[detail]["rows"], amount),
+        "summaryMetrics": fixed_summary(jobs[customer]["rows"], jobs[detail]["rows"]),
         "customerView": project_customer_rows(results["jobs"][customer]),
         "workerView": worker_view,
         "evidenceView": evidence_view,

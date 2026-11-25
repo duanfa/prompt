@@ -1,6 +1,6 @@
 # 新版 exec/data 接口契约
 
-版本为 `labor-compliance-excel-v1-4-11`。
+版本为 `labor-compliance-excel-v1-4-12`。
 
 ## ContextForge
 
@@ -99,7 +99,7 @@ MCP文件模式每次保存原始完整Resp（保留code/message/model/succeed�
 
 ## 动态字段与报告边界
 
-- 月度证据以预警ID、客户ID和灵工ID关联人员明细中的主要规则。规则入键的 SQL 使用 `WF` 加 `MD5(客户ID|灵工ID|规则编码|币种)` 作为预警ID，可据此识别人员明细缺失的 R01 证据。
+- 总览涉及金额直接加总客户汇总结果的 `involved_amount`。v4 SQL 让 R01、R02 使用同一锚定日和窗口宽度，并在最近三个完整月内对每个客户－灵工－币种组合只计一份窗口金额。
 
 - 固定用工预警报告类型为 `fixed_employment`，客户汇总、人员明细、月度证据分别写入对应页。成功空表显示0行。
 - 长整数和高精度小数保留精度，null及缺失键显示“未提供”。完整业务字段和主键待确认，`business_mapping_verified=false`。`monthly_evidence_available=true` 表示工作簿包含实际证据行。
