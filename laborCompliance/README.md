@@ -1,6 +1,6 @@
 # 灵工风控报告 Agent
 
-当前版本 `labor-compliance-excel-v1-4-10`，通过 ContextForge 读取 DEV 或 Fake API 的结果，输出 Excel。
+当前版本 `labor-compliance-excel-v1-4-11`，通过 ContextForge 读取 DEV 或 Fake API 的结果，输出 Excel。
 
 - [主提示词](主提示词_v1-0-0_编排版.md)
 - [Skill](skills/labor-compliance-report/SKILL.md)

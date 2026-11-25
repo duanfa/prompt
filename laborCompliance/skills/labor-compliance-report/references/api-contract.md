@@ -1,6 +1,6 @@
 # 新版 exec/data 接口契约
 
-版本为 `labor-compliance-excel-v1-4-10`。
+版本为 `labor-compliance-excel-v1-4-11`。
 
 ## ContextForge
 
@@ -98,6 +98,8 @@ MCP文件模式每次保存原始完整Resp（保留code/message/model/succeed�
 报告入口scripts/generate_report.py --exec-manifest work/exec-manifest.json --output outputs/本次任务/report.xlsx。文件模式页按本地文件读取。两种模式均验证业务响应、任务身份和分页。校验摘要的 `source.files` 记录文件页，`source.inline_files` 记录内联页路径。`source.integrity_verified` 和 `source.size_verified` 不作为报告成功条件。只有明确模拟数据时设置mock=true。
 
 ## 动态字段与报告边界
+
+- 月度证据以预警ID、客户ID和灵工ID关联人员明细中的主要规则。规则入键的 SQL 使用 `WF` 加 `MD5(客户ID|灵工ID|规则编码|币种)` 作为预警ID，可据此识别人员明细缺失的 R01 证据。
 
 - 固定用工预警报告类型为 `fixed_employment`，客户汇总、人员明细、月度证据分别写入对应页。成功空表显示0行。
 - 长整数和高精度小数保留精度，null及缺失键显示“未提供”。完整业务字段和主键待确认，`business_mapping_verified=false`。`monthly_evidence_available=true` 表示工作簿包含实际证据行。

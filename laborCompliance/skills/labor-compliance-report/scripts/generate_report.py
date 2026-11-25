@@ -27,7 +27,7 @@ sys.path[:0] = [str(HERE), str(SKILL / "vendor")]
 from validate_results import CUSTOMERS, EVIDENCE, WORKERS, need, validate
 from exec_results import FIXED_TASKS, excel_scalar, load_manifest
 
-VERSION = "labor-compliance-excel-v1-4-10"
+VERSION = "labor-compliance-excel-v1-4-11"
 EVIDENCE_ID_COLUMNS = ("exec_id", "etl_batch_no", "warn_id", "rule_version", "customer_id", "worker_id")
 EVIDENCE_MONTH_COLUMNS = ("obs_month", "month_amount", "anchor_day", "window_start", "window_end",
                           "window_amount", "window_ratio")
@@ -124,11 +124,27 @@ def customer_warning(value):
     return None
 
 
-def fixed_involved_amount(evidence, observation_months):
+def fixed_involved_amount(evidence, workers, observation_months):
+    def warning_key(row):
+        return tuple(str(row.get(field) or "") for field in ("warn_id", "customer_id", "worker_id"))
+
+    r01_warnings = {warning_key(row) for row in workers if row.get("main_rule") == "R01"}
     total = Decimal("0.00")
     for row in evidence:
         if row.get("obs_month") not in observation_months:
             continue
+        key = warning_key(row)
+        if not all(key):
+            continue
+        if key not in r01_warnings:
+            warn_id, customer_id, worker_id = key
+            currency = row.get("currency")
+            if not (isinstance(currency, str) and currency):
+                continue
+            # The rule-specific SQL encodes the rule even if the detail row is absent.
+            r01_key = f"{customer_id}|{worker_id}|R01|{currency}".encode("utf-8")
+            if warn_id.lower() != "wf" + hashlib.md5(r01_key).hexdigest():
+                continue
         value = row.get("window_amount")
         if value in (None, ""):
             continue
@@ -381,9 +397,9 @@ def generate_exec_excel(payload, output, source, mock=False, template=None, node
     notices = ["固定用工预警分别展示人员明细、客户汇总和月度证据。月度证据按预警标识分组，逐月列示。"]
     if not jobs[evidence]["rows"]:
         notices.append("本次月度证据任务成功返回0行。")
-    notices.append("客户按客户ID去重。人员按客户－灵工组合及主规则统计。涉及金额逐行加总最近3个完整月的月度证据窗口金额。")
+    notices.append("客户按客户ID去重。人员按客户－灵工组合及主规则统计。涉及金额逐行加总最近3个完整月的R01月度证据窗口金额。")
     metadata = fixed_report_metadata(jobs)
-    amount = fixed_involved_amount(jobs[evidence]["rows"], metadata["observationMonths"])
+    amount = fixed_involved_amount(jobs[evidence]["rows"], jobs[detail]["rows"], metadata["observationMonths"])
     export_mock = mock or payload["mock"]
     results = excel_scalar(payload)
     worker_view = project_rows(results["jobs"][detail], WORKER_COLUMNS,
